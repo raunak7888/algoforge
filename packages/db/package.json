@@ -1,0 +1,19 @@
+{
+  "name": "@algoforge/db",
+  "version": "1.0.0",
+  "private": true,
+  "main": "./src/index.ts",
+  "scripts": {
+    "migrate": "prisma migrate dev --name init",
+    "generate": "prisma generate",
+    "studio": "prisma studio",
+    "build": "tsc"
+  },
+  "dependencies": {
+    "@prisma/client": "^5.22.0"
+  },
+  "devDependencies": {
+    "prisma": "^5.22.0",
+    "typescript": "^5.3.3"
+  }
+}

@@ -1,0 +1,18 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: algoforge-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: algoforge
+      POSTGRES_PASSWORD: algoforge
+      POSTGRES_DB: algoforge
+    ports:
+      - "5433:5432"
+    volumes:
+      - algoforge_pgdata:/var/lib/postgresql/data
+
+volumes:
+  algoforge_pgdata:
