@@ -1,20 +1,22 @@
+import { AuthProvider } from "@/context/Authcontext";
 import type { Metadata } from "next";
+import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "AlgoForge",
-  description: "Algorithm complexity analyzer",
+    title: "AlgoForge",
+    description: "Algorithm analyzer",
 };
 
 export default function RootLayout({
-  children,
+    children,
 }: {
-  children: React.ReactNode;
+    children: React.ReactNode;
 }) {
-  return (
-    <html lang="en">
-      <body style={{ margin: 0, fontFamily: "system-ui, sans-serif", background: "#0f0f0f", color: "#e0e0e0" }}>
-        {children}
-      </body>
-    </html>
-  );
+    return (
+        <html lang="en">
+            <body>
+                <AuthProvider>{children}</AuthProvider>
+            </body>
+        </html>
+    );
 }

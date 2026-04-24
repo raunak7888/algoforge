@@ -10,18 +10,27 @@ datasource db {
 model User {
   id        String     @id @default(cuid())
   email     String     @unique
+  name      String?
+  image     String?
   createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+  
   analyses  Analysis[]
+  
+  @@map("users")
 }
 
 model Analysis {
-  id           String   @id @default(cuid())
-  code         String
-  language     String
-  complexity   String
-  suggestion   String
-  timeEstimate String
-  createdAt    DateTime @default(now())
-  userId       String?
-  user         User?    @relation(fields: [userId], references: [id])
+  id          String   @id @default(cuid())
+  code        String
+  language    String
+  complexity  String?
+  result      Json?
+  createdAt   DateTime @default(now())
+  
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@index([userId])
+  @@map("analyses")
 }

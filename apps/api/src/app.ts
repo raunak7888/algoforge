@@ -1,6 +1,7 @@
 import express from "express";
 import cors from "cors";
 import { analysisRouter } from "./routes/analysis";
+import authRouter from './routes/auth';
 
 const app = express();
 
@@ -20,6 +21,7 @@ app.get("/health", (_req, res) => {
 });
 
 // Routes
-app.use("/analysis", analysisRouter);
+app.use('/api/auth', authRouter);
+app.use("/api/analysis", analysisRouter);
 
 export { app };
