@@ -4,3 +4,10 @@ dist
 .env
 .env.local
 *.tsbuildinfo
+.vscode
+.idea
+.DS_Store
+*.log
+coverage
+*.cache
+*.tmp
