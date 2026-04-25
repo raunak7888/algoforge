@@ -1,6 +1,5 @@
 import dotenv from "dotenv";
 
-// 1. Initialize dotenv at the top-level
 dotenv.config();
 
 function requireEnv(name: string): string {
@@ -21,12 +20,44 @@ function parseInteger(name: string, fallback: number): number {
   }
 
   const parsed = Number(rawValue);
-  // Fixed logic: ensures it is an integer and greater than 0
   if (!Number.isInteger(parsed) || parsed <= 0) {
     throw new Error(`Environment variable ${name} must be a positive integer.`);
   }
 
   return parsed;
+}
+
+function parseStringEnum<T extends string>(
+  name: string,
+  allowedValues: readonly T[],
+  fallback: T,
+): T {
+  const rawValue = process.env[name];
+
+  if (!rawValue) {
+    return fallback;
+  }
+
+  if (!allowedValues.includes(rawValue as T)) {
+    throw new Error(
+      `Environment variable ${name} must be one of: ${allowedValues.join(", ")}.`,
+    );
+  }
+
+  return rawValue as T;
+}
+
+function parseList(name: string): string[] {
+  const rawValue = process.env[name];
+
+  if (!rawValue) {
+    return [];
+  }
+
+  return rawValue
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
 }
 
 const port = parseInteger("PORT", 4000);
@@ -49,6 +80,20 @@ export const env = {
   refreshTokenTtlDays: parseInteger("REFRESH_TOKEN_TTL_DAYS", 30),
   authIssuer: process.env.AUTH_ISSUER ?? "algoforge-api",
   authAudience: process.env.AUTH_AUDIENCE ?? "algoforge-web",
+  geminiApiKey: requireEnv("GEMINI_API_KEY"),
+  ai: {
+    provider: parseStringEnum("AI_PROVIDER", ["gemini"], "gemini"),
+    model: process.env.AI_MODEL ?? "gemini-2.0-flash",
+    timeoutMs: parseInteger("AI_TIMEOUT_MS", 15000),
+    maxRetries: parseInteger("AI_MAX_RETRIES", 1),
+  },
+  openRouter: {
+    baseUrl: process.env.OPENROUTER_BASE_URL ?? "https://openrouter.ai/api/v1",
+    apiKeys: parseList("OPENROUTER_API_KEYS"),
+    freeModels: parseList("OPENROUTER_FREE_MODELS"),
+    appName: process.env.OPENROUTER_APP_NAME ?? "AlgoForge",
+    siteUrl: process.env.OPENROUTER_SITE_URL ?? process.env.WEB_APP_URL,
+  },
 };
 
 export const authCookies = {

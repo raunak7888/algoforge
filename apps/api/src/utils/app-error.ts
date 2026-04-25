@@ -18,4 +18,12 @@ export class AppError extends Error {
   static forbidden(message: string): AppError {
     return new AppError(403, message, "FORBIDDEN");
   }
+
+  static badGateway(message: string): AppError {
+    return new AppError(502, message, "BAD_GATEWAY");
+  }
+
+  static internal(message: string): AppError {
+    return new AppError(500, message, "INTERNAL_ERROR");
+  }
 }

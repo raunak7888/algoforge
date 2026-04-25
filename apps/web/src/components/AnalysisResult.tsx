@@ -1,120 +1,181 @@
 "use client";
 
-type AnalysisResponse = {
-  id: string;
-  language: string;
-  complexity: string;
-  suggestion: string;
-  timeEstimate: string;
-  createdAt: string;
-};
+import type { ReactNode } from "react";
+import type { AnalysisRecord } from "@algoforge/analysis";
 
 type Props = {
-  result: AnalysisResponse;
+  result: AnalysisRecord;
 };
 
-function Badge({
+function Section({
+  title,
+  children,
+}: {
+  title: string;
+  children: ReactNode;
+}) {
+  return (
+    <section className="rounded-xl border border-slate-800 bg-slate-950/80 p-5">
+      <h3 className="mb-3 text-sm font-semibold uppercase tracking-[0.2em] text-slate-400">
+        {title}
+      </h3>
+      {children}
+    </section>
+  );
+}
+
+function Metric({
   label,
   value,
-  color,
 }: {
   label: string;
   value: string;
-  color: string;
 }) {
   return (
-    <div
-      style={{
-        background: "#1a1a2e",
-        border: `1px solid ${color}`,
-        borderRadius: 8,
-        padding: "16px 20px",
-        flex: "1 1 0",
-        minWidth: 160,
-      }}
-    >
-      <p
-        style={{
-          margin: 0,
-          fontSize: 11,
-          color: "#6b7280",
-          textTransform: "uppercase",
-          letterSpacing: 1,
-        }}
-      >
-        {label}
-      </p>
-      <p style={{ margin: "8px 0 0", fontSize: 22, fontWeight: 700, color }}>
-        {value}
-      </p>
+    <div className="rounded-xl border border-slate-800 bg-slate-950/80 p-4">
+      <p className="text-xs uppercase tracking-[0.2em] text-slate-500">{label}</p>
+      <p className="mt-2 text-lg font-semibold text-slate-100">{value}</p>
     </div>
   );
 }
 
 export function AnalysisResult({ result }: Props) {
   return (
-    <div
-      style={{
-        marginTop: 32,
-        background: "#111827",
-        border: "1px solid #1f2937",
-        borderRadius: 12,
-        padding: 24,
-      }}
-    >
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          marginBottom: 20,
-        }}
-      >
-        <h2 style={{ margin: 0, fontSize: 18, color: "#f9fafb" }}>Analysis Result</h2>
-        <span style={{ fontSize: 11, color: "#4b5563" }}>ID: {result.id}</span>
+    <div className="mt-8 space-y-5 rounded-2xl border border-slate-800 bg-slate-900/70 p-6 shadow-2xl shadow-slate-950/30">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <h2 className="text-2xl font-semibold text-slate-50">Analysis Result</h2>
+          <p className="mt-2 text-sm text-slate-400">
+            Stored at {new Date(result.createdAt).toLocaleString()}
+          </p>
+        </div>
+        <div className="rounded-full border border-cyan-400/30 bg-cyan-400/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.2em] text-cyan-200">
+          {result.language}
+        </div>
       </div>
 
-      <div
-        style={{
-          display: "flex",
-          gap: 12,
-          flexWrap: "wrap",
-          marginBottom: 20,
-        }}
-      >
-        <Badge label="Complexity" value={result.complexity} color="#a78bfa" />
-        <Badge label="Est. Runtime" value={result.timeEstimate} color="#34d399" />
-        <Badge label="Language" value={result.language.toUpperCase()} color="#60a5fa" />
+      <Section title="Summary">
+        <p className="text-sm leading-7 text-slate-200">{result.result.summary}</p>
+      </Section>
+
+      <div className="grid gap-4 md:grid-cols-4">
+        <Metric label="Best Time" value={result.result.complexity.time.best} />
+        <Metric label="Average Time" value={result.result.complexity.time.average} />
+        <Metric label="Worst Time" value={result.result.complexity.time.worst} />
+        <Metric label="Space" value={result.result.complexity.space} />
       </div>
 
-      <div
-        style={{
-          background: "#1a1a2e",
-          border: "1px solid #2d2d4e",
-          borderRadius: 8,
-          padding: "16px 20px",
-        }}
-      >
-        <p
-          style={{
-            margin: 0,
-            fontSize: 11,
-            color: "#6b7280",
-            textTransform: "uppercase",
-            letterSpacing: 1,
-            marginBottom: 8,
-          }}
-        >
-          Suggestion
-        </p>
-        <p style={{ margin: 0, fontSize: 15, color: "#d1d5db", lineHeight: 1.6 }}>
-          {result.suggestion}
-        </p>
-      </div>
+      <Section title="Breakdown">
+        <p className="text-sm leading-7 text-slate-200">{result.result.breakdown.approach}</p>
+        <ol className="mt-4 space-y-2 text-sm text-slate-300">
+          {result.result.breakdown.steps.map((step, index) => (
+            <li key={`${step}-${index}`} className="rounded-lg border border-slate-800 bg-slate-900/80 px-3 py-2">
+              {index + 1}. {step}
+            </li>
+          ))}
+        </ol>
+      </Section>
 
-      <p style={{ margin: "16px 0 0", fontSize: 12, color: "#374151" }}>
-        Stored at {new Date(result.createdAt).toLocaleString()}
-      </p>
+      <Section title="Bottlenecks">
+        <div className="space-y-3">
+          {result.result.bottlenecks.length ? (
+            result.result.bottlenecks.map((item, index) => (
+              <div key={`${item.issue}-${index}`} className="rounded-lg border border-amber-400/20 bg-amber-400/5 p-4">
+                <p className="font-medium text-amber-100">{item.issue}</p>
+                <p className="mt-2 text-sm text-slate-300">{item.impact}</p>
+                {item.location ? (
+                  <p className="mt-2 text-xs uppercase tracking-[0.2em] text-amber-300/80">
+                    {item.location}
+                  </p>
+                ) : null}
+              </div>
+            ))
+          ) : (
+            <p className="text-sm text-slate-400">No significant bottlenecks detected.</p>
+          )}
+        </div>
+      </Section>
+
+      <Section title="Anti-Patterns">
+        <div className="flex flex-wrap gap-2">
+          {result.result.antiPatterns.length ? (
+            result.result.antiPatterns.map((item, index) => (
+              <span key={`${item}-${index}`} className="rounded-full border border-rose-400/25 bg-rose-400/10 px-3 py-1 text-sm text-rose-100">
+                {item}
+              </span>
+            ))
+          ) : (
+            <p className="text-sm text-slate-400">No anti-patterns detected.</p>
+          )}
+        </div>
+      </Section>
+
+      <Section title="Improvements">
+        <div className="space-y-3">
+          {result.result.improvements.length ? (
+            result.result.improvements.map((item, index) => (
+              <div key={`${item.suggestion}-${index}`} className="rounded-lg border border-emerald-400/20 bg-emerald-400/5 p-4">
+                <p className="font-medium text-emerald-100">{item.suggestion}</p>
+                <p className="mt-2 text-sm text-slate-300">{item.expectedImpact}</p>
+              </div>
+            ))
+          ) : (
+            <p className="text-sm text-slate-400">No improvements suggested.</p>
+          )}
+        </div>
+      </Section>
+
+      <Section title="Optimized Code">
+        <pre className="overflow-x-auto rounded-xl border border-slate-800 bg-black/40 p-4 text-sm leading-6 text-slate-200">
+          <code>{result.result.optimizedCode}</code>
+        </pre>
+      </Section>
+
+      {result.result.comparison ? (
+        <Section title="Comparison">
+          <p className="text-sm leading-7 text-slate-200">
+            {result.result.comparison.originalVsOptimized}
+          </p>
+          <p className="mt-3 text-sm leading-7 text-slate-400">
+            {result.result.comparison.improvementSummary}
+          </p>
+        </Section>
+      ) : null}
+
+      <Section title="Edge Cases">
+        <div className="flex flex-wrap gap-2">
+          {result.result.edgeCases.length ? (
+            result.result.edgeCases.map((item, index) => (
+              <span key={`${item}-${index}`} className="rounded-full border border-blue-400/25 bg-blue-400/10 px-3 py-1 text-sm text-blue-100">
+                {item}
+              </span>
+            ))
+          ) : (
+            <p className="text-sm text-slate-400">No edge cases reported.</p>
+          )}
+        </div>
+      </Section>
+
+      {typeof result.result.readabilityScore === "number" || result.result.tags?.length ? (
+        <div className="grid gap-4 md:grid-cols-2">
+          {typeof result.result.readabilityScore === "number" ? (
+            <Section title="Readability Score">
+              <p className="text-3xl font-semibold text-slate-50">{result.result.readabilityScore}/100</p>
+            </Section>
+          ) : null}
+          {result.result.tags?.length ? (
+            <Section title="Tags">
+              <div className="flex flex-wrap gap-2">
+                {result.result.tags.map((tag) => (
+                  <span key={tag} className="rounded-full border border-slate-700 bg-slate-800 px-3 py-1 text-sm text-slate-200">
+                    {tag}
+                  </span>
+                ))}
+              </div>
+            </Section>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }

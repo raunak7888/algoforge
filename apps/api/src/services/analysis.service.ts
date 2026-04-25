@@ -1,87 +1,35 @@
+import { AnalysisRecordSchema, type CreateAnalysisInput } from "@algoforge/analysis";
 import { prisma } from "@algoforge/db";
-import { AnalysisInput } from "../validation/analysis";
-
-function generateAnalysisResult(code: string, language: string) {
-  const lineCount = code.split("\n").length;
-
-  const complexityMap: Record<string, string> = {
-    python: lineCount > 20 ? "O(n^2)" : "O(n log n)",
-    javascript: lineCount > 20 ? "O(n^2)" : "O(n)",
-    typescript: lineCount > 20 ? "O(n^2)" : "O(n)",
-    java: lineCount > 30 ? "O(n^3)" : "O(n log n)",
-    cpp: lineCount > 30 ? "O(n^2)" : "O(log n)",
-    go: "O(n)",
-    rust: "O(log n)",
-  };
-
-  const suggestionMap: Record<string, string> = {
-    python: "Use list comprehensions when it improves readability and avoids repeated passes.",
-    javascript: "Prefer explicit comparisons and avoid implicit coercion in hot paths.",
-    typescript: "Keep strict typing enabled and eliminate any in algorithm-critical code.",
-    java: "Avoid repeated string concatenation in loops and prefer StringBuilder.",
-    cpp: "Prefer STL containers and algorithms over raw arrays where possible.",
-    go: "Avoid unnecessary allocations inside loops and keep goroutine fan-out bounded.",
-    rust: "Favor iterator adapters for traversal-heavy logic and avoid redundant clones.",
-  };
-
-  return {
-    complexity: complexityMap[language] ?? "O(n)",
-    suggestion:
-      suggestionMap[language] ??
-      "Review data structure choice and reduce unnecessary passes over the data.",
-    timeEstimate: `${Math.max(1, lineCount * 2)}ms`,
-    lineCount,
-  };
-}
+import { aiService } from "./ai.service";
 
 class AnalysisService {
-  async createAnalysis(userId: string, input: AnalysisInput) {
-    const analysisResult = generateAnalysisResult(input.code, input.language);
+  async createAnalysis(userId: string, input: CreateAnalysisInput) {
+    const analysisResult = await aiService.analyzeCode(input);
 
     const analysis = await prisma.analysis.create({
       data: {
         userId,
         code: input.code,
         language: input.language,
-        complexity: analysisResult.complexity,
-        suggestion: analysisResult.suggestion,
-        timeEstimate: analysisResult.timeEstimate,
-        result: {
-          lineCount: analysisResult.lineCount,
-          complexity: analysisResult.complexity,
-          timeEstimate: analysisResult.timeEstimate,
-          timestamp: new Date().toISOString(),
-        },
+        complexity: analysisResult.complexity.time.worst,
+        suggestion: analysisResult.improvements[0]?.suggestion ?? null,
+        timeEstimate: analysisResult.complexity.time.average,
+        result: analysisResult,
       },
       select: {
         id: true,
         language: true,
-        complexity: true,
-        suggestion: true,
-        timeEstimate: true,
         result: true,
         createdAt: true,
-        user: {
-          select: {
-            id: true,
-            email: true,
-            name: true,
-            role: true,
-          },
-        },
       },
     });
 
-    return {
+    return AnalysisRecordSchema.parse({
       id: analysis.id,
       language: analysis.language,
-      complexity: analysis.complexity ?? "O(n)",
-      suggestion: analysis.suggestion ?? "",
-      timeEstimate: analysis.timeEstimate ?? "",
       result: analysis.result,
-      createdAt: analysis.createdAt,
-      user: analysis.user,
-    };
+      createdAt: analysis.createdAt.toISOString(),
+    });
   }
 
   async listUserAnalyses(userId: string) {
@@ -91,23 +39,19 @@ class AnalysisService {
       select: {
         id: true,
         language: true,
-        complexity: true,
-        suggestion: true,
-        timeEstimate: true,
         result: true,
         createdAt: true,
       },
     });
 
-    return analyses.map((analysis) => ({
-      id: analysis.id,
-      language: analysis.language,
-      complexity: analysis.complexity ?? "O(n)",
-      suggestion: analysis.suggestion ?? "",
-      timeEstimate: analysis.timeEstimate ?? "",
-      result: analysis.result,
-      createdAt: analysis.createdAt,
-    }));
+    return analyses.map((analysis) =>
+      AnalysisRecordSchema.parse({
+        id: analysis.id,
+        language: analysis.language,
+        result: analysis.result,
+        createdAt: analysis.createdAt.toISOString(),
+      }),
+    );
   }
 }
 

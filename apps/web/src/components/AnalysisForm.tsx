@@ -1,31 +1,25 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type ChangeEvent, type FormEvent } from "react";
+import { AnalysisRecordSchema, type AnalysisLanguage, type AnalysisRecord } from "@algoforge/analysis";
 import { apiFetch } from "@/lib/api";
 
-const LANGUAGES = [
-  "python",
-  "javascript",
-  "typescript",
-  "java",
-  "cpp",
-  "go",
-  "rust",
+const LANGUAGES: { value: AnalysisLanguage; label: string }[] = [
+  { value: "javascript", label: "JavaScript" },
+  { value: "python", label: "Python" },
 ];
 
-type AnalysisResponse = any;
-
 type Props = {
-  onResult: (data: AnalysisResponse) => void;
+  onResult: (data: AnalysisRecord) => void;
   onError: (msg: string) => void;
 };
 
 export default function AnalysisForm({ onResult, onError }: Props) {
   const [code, setCode] = useState("");
-  const [language, setLanguage] = useState("javascript");
+  const [language, setLanguage] = useState<AnalysisLanguage>("javascript");
   const [loading, setLoading] = useState(false);
 
-  async function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
 
     if (!code.trim()) {
@@ -34,13 +28,11 @@ export default function AnalysisForm({ onResult, onError }: Props) {
     }
 
     setLoading(true);
+    onError("");
 
     try {
       const res = await apiFetch("/api/analysis", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
         body: JSON.stringify({
           code: code.trim(),
           language,
@@ -59,13 +51,17 @@ export default function AnalysisForm({ onResult, onError }: Props) {
         return;
       }
 
-      onResult(data as AnalysisResponse);
+      onResult(AnalysisRecordSchema.parse(data));
     } catch (err) {
       console.error(err);
       onError("Failed to reach the API. Is backend running?");
     } finally {
       setLoading(false);
     }
+  }
+
+  function handleLanguageChange(e: ChangeEvent<HTMLSelectElement>) {
+    setLanguage(e.target.value as AnalysisLanguage);
   }
 
   return (
@@ -76,12 +72,13 @@ export default function AnalysisForm({ onResult, onError }: Props) {
         </label>
         <select
           value={language}
-          onChange={(e) => setLanguage(e.target.value)}
-          className="w-full px-4 py-2 rounded-lg bg-[#1a1a2e] border border-[#2d2d4e] text-white focus:outline-none"
+          onChange={handleLanguageChange}
+          disabled={loading}
+          className="w-full px-4 py-2 rounded-lg bg-[#1a1a2e] border border-[#2d2d4e] text-white focus:outline-none disabled:opacity-60"
         >
           {LANGUAGES.map((lang) => (
-            <option key={lang} value={lang}>
-              {lang.charAt(0).toUpperCase() + lang.slice(1)}
+            <option key={lang.value} value={lang.value}>
+              {lang.label}
             </option>
           ))}
         </select>
@@ -94,8 +91,9 @@ export default function AnalysisForm({ onResult, onError }: Props) {
         <textarea
           value={code}
           onChange={(e) => setCode(e.target.value)}
-          placeholder="// Paste your code here..."
-          className="w-full h-64 px-4 py-2 rounded-lg bg-[#1a1a2e] border border-[#2d2d4e] text-sm font-mono text-gray-200 focus:outline-none resize-y"
+          placeholder={language === "python" ? "# Paste your code here..." : "// Paste your code here..."}
+          disabled={loading}
+          className="w-full h-64 px-4 py-2 rounded-lg bg-[#1a1a2e] border border-[#2d2d4e] text-sm font-mono text-gray-200 focus:outline-none resize-y disabled:opacity-60"
         />
       </div>
 

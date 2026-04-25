@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import type { AnalysisRecord } from "@algoforge/analysis";
 import { useAuth } from "@/context/Authcontext";
 import { AnalysisResult } from "@/components/AnalysisResult";
 import AnalysisForm from "../components/AnalysisForm";
@@ -8,7 +9,7 @@ import LoginButton from "../components/LoginButton";
 
 export default function Home() {
   const { user, logout, isLoading } = useAuth();
-  const [analysisResult, setAnalysisResult] = useState(null);
+  const [analysisResult, setAnalysisResult] = useState<AnalysisRecord | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [authError, setAuthError] = useState<string | null>(null);
 
