@@ -1,0 +1,23 @@
+import { Role } from "@algoforge/db";
+
+declare global {
+  namespace Express {
+    interface Request {
+      auth?: {
+        user: {
+          id: string;
+          email: string | null;
+          name: string | null;
+          image: string | null;
+          role: Role;
+        };
+        session: {
+          id: string;
+          expiresAt: Date;
+        };
+      };
+    }
+  }
+}
+
+export {};

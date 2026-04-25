@@ -1,27 +1,35 @@
-import express from "express";
 import cors from "cors";
-import { analysisRouter } from "./routes/analysis";
-import authRouter from './routes/auth';
+import express from "express";
+import { env } from "./config/env";
+import { errorHandler } from "./middleware/error-handler";
+import { notFoundHandler } from "./middleware/not-found";
+import { securityHeaders } from "./middleware/security-headers";
+import analysisRouter from "./routes/analysis";
+import authRouter from "./routes/auth";
 
 const app = express();
 
+app.set("trust proxy", 1);
+
+app.use(securityHeaders);
 app.use(
   cors({
-    origin: "http://localhost:3000",
+    origin: env.webAppUrl,
+    credentials: true,
     methods: ["GET", "POST", "OPTIONS"],
-    allowedHeaders: ["Content-Type"],
-  })
+    allowedHeaders: ["Content-Type", "X-CSRF-Token"],
+  }),
 );
+app.use(express.json({ limit: "256kb" }));
 
-app.use(express.json());
-
-// Health check
 app.get("/health", (_req, res) => {
   res.json({ status: "ok", timestamp: new Date().toISOString() });
 });
 
-// Routes
-app.use('/api/auth', authRouter);
+app.use("/api/auth", authRouter);
 app.use("/api/analysis", analysisRouter);
+
+app.use(notFoundHandler);
+app.use(errorHandler);
 
 export { app };

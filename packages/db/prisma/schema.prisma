@@ -7,30 +7,80 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-model User {
-  id        String     @id @default(cuid())
-  email     String     @unique
-  name      String?
-  image     String?
-  createdAt DateTime   @default(now())
-  updatedAt DateTime   @updatedAt
-  
-  analyses  Analysis[]
-  
-  @@map("users")
+enum Role {
+  USER
+  ADMIN
 }
 
 model Analysis {
-  id          String   @id @default(cuid())
-  code        String
-  language    String
-  complexity  String?
-  result      Json?
-  createdAt   DateTime @default(now())
-  
-  userId      String
-  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  
+  id           String   @id @default(cuid())
+  code         String
+  language     String
+  complexity   String?
+  suggestion   String?
+  timeEstimate String?
+  result       Json?
+  createdAt    DateTime @default(now())
+
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
   @@index([userId])
   @@map("analyses")
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String?  @unique
+  role      Role     @default(USER)
+  name      String?
+  image     String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  accounts  Account[]
+  sessions  Session[]
+  analyses  Analysis[]
+
+  @@map("users")
+}
+
+model Account {
+  id                 String @id @default(cuid())
+  provider           String
+  providerAccountId  String
+  userId             String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+  @@map("accounts")
+}
+
+model Session {
+  id            String    @id @default(cuid())
+  tokenHash     String
+  ipAddress     String?
+  userAgent     String?
+  lastUsedAt    DateTime?
+  expiresAt     DateTime
+  revokedAt     DateTime?
+  rotatedFromId String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  userId String
+  user   User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@index([revokedAt])
+  @@index([rotatedFromId])
+  @@map("sessions")
 }

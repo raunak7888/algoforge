@@ -1,32 +1,39 @@
-import { Request, Response, NextFunction } from "express";
-import { verifyToken } from "../utils/jwt";
+import { NextFunction, Request, Response } from "express";
+import { Role } from "@algoforge/db";
+import { authCookies } from "../config/env";
+import { authService } from "../services/auth.service";
+import { AppError } from "../utils/app-error";
+import { getCookie } from "../utils/cookies";
 
-export interface AuthRequest extends Request {
-    user?: {
-        userId: string;
-        email: string;
-    };
+export async function requireAuth(
+  req: Request,
+  _res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    const accessToken = getCookie(req, authCookies.accessToken);
+
+    if (!accessToken) {
+      return next(AppError.unauthorized("Authentication required."));
+    }
+
+    req.auth = await authService.authenticateAccessToken(accessToken);
+    next();
+  } catch (error) {
+    next(error);
+  }
 }
 
-export function authenticate(
-    req: AuthRequest,
-    res: Response,
-    next: NextFunction,
-): void {
-    try {
-        const authHeader = req.headers.authorization;
-
-        if (!authHeader || !authHeader.startsWith("Bearer ")) {
-            res.status(401).json({ error: "No token provided" });
-            return;
-        }
-
-        const token = authHeader.substring(7);
-        const payload = verifyToken(token);
-
-        req.user = payload;
-        next();
-    } catch (error) {
-        res.status(401).json({ error: "Invalid or expired token" });
+export function requireRoles(...roles: Role[]) {
+  return (req: Request, _res: Response, next: NextFunction): void => {
+    if (!req.auth) {
+      return next(AppError.unauthorized("Authentication required."));
     }
+
+    if (!roles.includes(req.auth.user.role)) {
+      return next(AppError.forbidden("Insufficient permissions."));
+    }
+
+    next();
+  };
 }

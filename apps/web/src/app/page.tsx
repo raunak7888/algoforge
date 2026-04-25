@@ -1,66 +1,76 @@
 "use client";
 
-import { useState } from "react";
-import { AnalysisForm } from "@/components/AnalysisForm";
+import { useEffect, useState } from "react";
+import { useAuth } from "@/context/Authcontext";
 import { AnalysisResult } from "@/components/AnalysisResult";
+import AnalysisForm from "../components/AnalysisForm";
+import LoginButton from "../components/LoginButton";
 
-export type AnalysisResponse = {
-    id: string;
-    language: string;
-    complexity: string;
-    suggestion: string;
-    timeEstimate: string;
-    createdAt: string;
-};
+export default function Home() {
+  const { user, logout, isLoading } = useAuth();
+  const [analysisResult, setAnalysisResult] = useState(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [authError, setAuthError] = useState<string | null>(null);
 
-export default function HomePage() {
-    const [result, setResult] = useState<AnalysisResponse | null>(null);
-    const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    setAuthError(params.get("authError"));
+  }, []);
 
+  if (isLoading) {
     return (
-        <main style={{ maxWidth: 780, margin: "0 auto", padding: "48px 24px" }}>
-            <h1
-                style={{
-                    fontSize: 32,
-                    fontWeight: 700,
-                    color: "#a78bfa",
-                    marginBottom: 4,
-                }}
-            >
-                ⚡ AlgoForge
-            </h1>
-            <p style={{ color: "#6b7280", marginBottom: 40, fontSize: 15 }}>
-                Paste your code. Get instant complexity analysis.
-            </p>
-
-            <AnalysisForm
-                onResult={(data) => {
-                    setError(null);
-                    setResult(data);
-                }}
-                onError={(msg) => {
-                    setResult(null);
-                    setError(msg);
-                }}
-            />
-
-            {error && (
-                <div
-                    style={{
-                        marginTop: 24,
-                        padding: "16px 20px",
-                        background: "#1f0707",
-                        border: "1px solid #7f1d1d",
-                        borderRadius: 8,
-                        color: "#fca5a5",
-                        fontSize: 14,
-                    }}
-                >
-                    ❌ {error}
-                </div>
-            )}
-
-            {result && <AnalysisResult result={result} />}
-        </main>
+      <div className="flex items-center justify-center min-h-screen">
+        <p>Loading...</p>
+      </div>
     );
+  }
+
+  if (!user) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-screen p-8">
+        <h1 className="text-4xl font-bold mb-8">AlgoForge</h1>
+        <p className="text-gray-600 mb-8">Sign in to analyze your code</p>
+        {authError ? (
+          <p className="mb-4 text-sm text-red-600">
+            Authentication failed. Try again.
+          </p>
+        ) : null}
+        <LoginButton />
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen p-8">
+      <div className="max-w-4xl mx-auto">
+        <div className="flex justify-between items-center mb-8">
+          <div>
+            <h1 className="text-4xl font-bold">AlgoForge</h1>
+            <p className="text-gray-600">Welcome, {user.name || user.email || "there"}</p>
+          </div>
+          <button
+            onClick={() => void logout()}
+            className="px-4 py-2 bg-gray-200 rounded-lg hover:bg-gray-300"
+          >
+            Logout
+          </button>
+        </div>
+
+        {errorMessage ? (
+          <p className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+            {errorMessage}
+          </p>
+        ) : null}
+
+        <AnalysisForm
+          onResult={(result) => {
+            setErrorMessage(null);
+            setAnalysisResult(result);
+          }}
+          onError={setErrorMessage}
+        />
+        {analysisResult && <AnalysisResult result={analysisResult} />}
+      </div>
+    </div>
+  );
 }

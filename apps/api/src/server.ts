@@ -1,8 +1,7 @@
 import { app } from "./app";
+import { env } from "./config/env";
 
-const PORT = process.env.PORT || 4000;
-
-app.listen(PORT, () => {
-    console.log(`[API] Server running at http://localhost:${PORT}`);
-    console.log(`[API] Health check: http://localhost:${PORT}/health`);
+app.listen(env.port, () => {
+  console.log(`[API] Server running at ${env.apiBaseUrl}`);
+  console.log(`[API] Health check: ${env.apiBaseUrl}/health`);
 });
