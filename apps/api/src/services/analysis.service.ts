@@ -12,6 +12,7 @@ import {
   type AnalysisHistoryQuery,
 } from "../validation/analysis";
 import { AppError } from "../utils/app-error";
+import { env } from "../config/env";
 
 function serializeAnalysisRecord(analysis: {
   id: string;
@@ -137,6 +138,65 @@ class AnalysisService {
     }
 
     return serializeAnalysisRecord(analysis);
+  }
+
+  async shareAnalysis(userId: string, analysisId: string) {
+    const analysis = await prisma.analysis.findFirst({
+      where: {
+        id: analysisId,
+        userId,
+      },
+    });
+
+    if (!analysis) {
+      throw AppError.notFound("Analysis not found.");
+    }
+
+    const record = analysis as any;
+    if (record.shareId && record.isPublic) {
+      return { shareUrl: `${env.webAppUrl}/share/${record.shareId}` };
+    }
+
+    const { nanoid } = await import("nanoid");
+    const shareId = nanoid(10);
+
+    await (prisma.analysis.update as any)({
+      where: { id: analysisId },
+      data: {
+        shareId,
+        isPublic: true,
+      },
+    });
+
+    return { shareUrl: `${env.webAppUrl}/share/${shareId}` };
+  }
+
+  async getPublicAnalysis(shareId: string) {
+    const analysis = await (prisma.analysis.findUnique as any)({
+      where: { shareId } as any,
+      select: {
+        code: true,
+        language: true,
+        result: true,
+        createdAt: true,
+        isPublic: true,
+      },
+    });
+
+    if (!analysis) {
+      throw AppError.notFound("Analysis not found.");
+    }
+
+    if (!(analysis as any).isPublic) {
+      throw AppError.forbidden("This analysis is not public.");
+    }
+
+    return {
+      code: analysis.code,
+      language: analysis.language,
+      result: analysis.result,
+      createdAt: analysis.createdAt.toISOString(),
+    };
   }
 }
 

@@ -6,6 +6,7 @@ import { notFoundHandler } from "./middleware/not-found";
 import { securityHeaders } from "./middleware/security-headers";
 import analysisRouter from "./routes/analysis";
 import authRouter from "./routes/auth";
+import shareRouter from "./routes/share";
 
 const app = express();
 
@@ -29,6 +30,7 @@ app.get("/health", (_req, res) => {
 app.use("/api/auth", authRouter);
 app.use("/api/analysis", analysisRouter);
 app.use("/api/analyses", analysisRouter);
+app.use("/api/share", shareRouter);
 
 app.use(notFoundHandler);
 app.use(errorHandler);

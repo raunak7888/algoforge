@@ -19,10 +19,21 @@ class AnalysisController {
   });
 
   getAnalysisById = asyncHandler(async (req: Request, res: Response) => {
-    console.error("Getting analysis by id:", req.params.id);
     const analysisId = ensureString(req.params.id, "Analysis id is required.");
     const analysis = await analysisService.getUserAnalysisById(req.auth!.user.id, analysisId);
     res.json(analysis);
+  });
+
+  shareAnalysis = asyncHandler(async (req: Request, res: Response) => {
+    const analysisId = ensureString(req.params.id, "Analysis id is required.");
+    const result = await analysisService.shareAnalysis(req.auth!.user.id, analysisId);
+    res.json(result);
+  });
+
+  getPublicAnalysis = asyncHandler(async (req: Request, res: Response) => {
+    const shareId = ensureString(req.params.shareId, "Share id is required.");
+    const result = await analysisService.getPublicAnalysis(shareId);
+    res.json(result);
   });
 }
 

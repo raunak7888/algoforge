@@ -99,6 +99,8 @@ class AuthController {
 
     res.json({ users });
   });
+
+  
 }
 
 export const authController = new AuthController();

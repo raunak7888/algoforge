@@ -1,7 +1,7 @@
-"use client";
-
+import { useState } from "react";
 import type { ReactNode } from "react";
 import type { AnalysisRecord } from "@algoforge/analysis";
+import { shareAnalysis } from "@/lib/analyses";
 
 type Props = {
   result: AnalysisRecord;
@@ -40,6 +40,30 @@ function Metric({
 }
 
 export function AnalysisResult({ result }: Props) {
+  const [shareUrl, setShareUrl] = useState<string | null>(null);
+  const [isSharing, setIsSharing] = useState(false);
+  const [copySuccess, setCopySuccess] = useState(false);
+
+  const handleShare = async () => {
+    setIsSharing(true);
+    try {
+      const response = await shareAnalysis(result.id);
+      setShareUrl(response.shareUrl);
+    } catch (err) {
+      console.error("Failed to share analysis:", err);
+    } finally {
+      setIsSharing(false);
+    }
+  };
+
+  const handleCopy = () => {
+    if (shareUrl) {
+      void navigator.clipboard.writeText(shareUrl);
+      setCopySuccess(true);
+      setTimeout(() => setCopySuccess(false), 2000);
+    }
+  };
+
   return (
     <div className="mt-8 space-y-5 rounded-2xl border border-slate-800 bg-slate-900/70 p-6 shadow-2xl shadow-slate-950/30">
       <div className="flex flex-wrap items-start justify-between gap-4">
@@ -49,8 +73,33 @@ export function AnalysisResult({ result }: Props) {
             Stored at {new Date(result.createdAt).toLocaleString()}
           </p>
         </div>
-        <div className="rounded-full border border-cyan-400/30 bg-cyan-400/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.2em] text-cyan-200">
-          {result.language}
+        <div className="flex items-center gap-3">
+          {result.id && (
+            shareUrl ? (
+              <div className="flex items-center gap-2 overflow-hidden rounded-lg border border-slate-700 bg-slate-950 p-1">
+                <span className="max-w-[150px] truncate px-2 text-xs text-slate-400">
+                  {shareUrl}
+                </span>
+                <button
+                  onClick={handleCopy}
+                  className="rounded-md bg-cyan-600 px-3 py-1 text-xs font-medium text-white transition hover:bg-cyan-500"
+                >
+                  {copySuccess ? "Copied!" : "Copy"}
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={handleShare}
+                disabled={isSharing}
+                className="rounded-lg border border-slate-700 bg-slate-950 px-4 py-2 text-sm font-medium text-slate-200 transition hover:bg-slate-900 disabled:opacity-50"
+              >
+                {isSharing ? "Sharing..." : "Share Report"}
+              </button>
+            )
+          )}
+          <div className="rounded-full border border-cyan-400/30 bg-cyan-400/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.2em] text-cyan-200">
+            {result.language}
+          </div>
         </div>
       </div>
 

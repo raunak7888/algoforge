@@ -77,3 +77,26 @@ export async function createAnalysis(input: CreateAnalysisInput): Promise<Analys
 
   return AnalysisRecordSchema.parse(await response.json());
 }
+
+export async function shareAnalysis(analysisId: string): Promise<{ shareUrl: string }> {
+  const response = await apiFetch(`/api/analysis/${analysisId}/share`, {
+    method: "POST",
+  });
+
+  if (!response.ok) {
+    return parseError(response);
+  }
+
+  return response.json() as Promise<{ shareUrl: string }>;
+}
+
+export async function fetchPublicAnalysis(shareId: string): Promise<any> {
+  const response = await apiFetch(`/api/share/${shareId}`);
+
+  if (!response.ok) {
+    return parseError(response);
+  }
+
+  return response.json();
+}
+

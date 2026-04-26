@@ -20,6 +20,9 @@ model Analysis {
   suggestion   String?
   timeEstimate String?
   result       Json
+  shareId      String?  @unique
+  isPublic     Boolean  @default(false)
+
   createdAt    DateTime @default(now())
 
   userId       String
