@@ -19,13 +19,15 @@ model Analysis {
   complexity   String?
   suggestion   String?
   timeEstimate String?
-  result       Json?
+  result       Json
   createdAt    DateTime @default(now())
 
   userId       String
   user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
+  @@index([createdAt])
+  @@index([userId, createdAt, id])
   @@map("analyses")
 }
 

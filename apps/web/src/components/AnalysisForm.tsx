@@ -1,8 +1,8 @@
 "use client";
 
 import { useState, type ChangeEvent, type FormEvent } from "react";
-import { AnalysisRecordSchema, type AnalysisLanguage, type AnalysisRecord } from "@algoforge/analysis";
-import { apiFetch } from "@/lib/api";
+import type { AnalysisLanguage, AnalysisRecord } from "@algoforge/analysis";
+import { AnalysisApiError, createAnalysis } from "@/lib/analyses";
 
 const LANGUAGES: { value: AnalysisLanguage; label: string }[] = [
   { value: "javascript", label: "JavaScript" },
@@ -31,30 +31,20 @@ export default function AnalysisForm({ onResult, onError }: Props) {
     onError("");
 
     try {
-      const res = await apiFetch("/api/analysis", {
-        method: "POST",
-        body: JSON.stringify({
-          code: code.trim(),
-          language,
-        }),
+      const analysis = await createAnalysis({
+        code: code.trim(),
+        language,
       });
 
-      const data = await res.json();
-
-      if (!res.ok) {
-        if (res.status === 401) {
-          onError("Your session expired. Please sign in again.");
-          return;
-        }
-
-        onError(data.error ?? "Analysis failed.");
+      onResult(analysis);
+    } catch (err) {
+      if (err instanceof AnalysisApiError && err.status === 401) {
+        onError("Your session expired. Please sign in again.");
         return;
       }
 
-      onResult(AnalysisRecordSchema.parse(data));
-    } catch (err) {
       console.error(err);
-      onError("Failed to reach the API. Is backend running?");
+      onError(err instanceof Error ? err.message : "Failed to reach the API. Is backend running?");
     } finally {
       setLoading(false);
     }

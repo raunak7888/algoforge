@@ -58,12 +58,27 @@ export const AnalysisRecordSchema = z.object({
   createdAt: z.string().datetime(),
 });
 
-export const AnalysisListSchema = z.object({
-  analyses: z.array(AnalysisRecordSchema),
+export const AnalysisHistoryItemSchema = z.object({
+  id: z.string().min(1),
+  language: AnalysisLanguageSchema,
+  complexity: z.string().nullable(),
+  suggestion: z.string().nullable(),
+  createdAt: z.string().datetime(),
+});
+
+export const AnalysisHistoryMetaSchema = z.object({
+  nextCursor: z.string().nullable(),
+  hasMore: z.boolean(),
+});
+
+export const AnalysisHistoryResponseSchema = z.object({
+  data: z.array(AnalysisHistoryItemSchema),
+  meta: AnalysisHistoryMetaSchema,
 });
 
 export type AnalysisLanguage = z.infer<typeof AnalysisLanguageSchema>;
 export type AnalysisResult = z.infer<typeof AnalysisResultSchema>;
 export type CreateAnalysisInput = z.infer<typeof CreateAnalysisInputSchema>;
 export type AnalysisRecord = z.infer<typeof AnalysisRecordSchema>;
-export type AnalysisList = z.infer<typeof AnalysisListSchema>;
+export type AnalysisHistoryItem = z.infer<typeof AnalysisHistoryItemSchema>;
+export type AnalysisHistoryResponse = z.infer<typeof AnalysisHistoryResponseSchema>;

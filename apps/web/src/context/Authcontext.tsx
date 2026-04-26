@@ -2,6 +2,7 @@
 
 import React, { createContext, useContext, useEffect, useState } from "react";
 import { apiFetch } from "@/lib/api";
+import { useAnalysisHistoryStore } from "@/store/analysis-history";
 
 interface User {
     id: string;
@@ -23,6 +24,7 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 export function AuthProvider({ children }: { children: React.ReactNode }) {
     const [user, setUser] = useState<User | null>(null);
     const [isLoading, setIsLoading] = useState(true);
+    const resetAnalysisHistory = useAnalysisHistoryStore((state) => state.reset);
 
     const hydrateSession = async (initial = false) => {
         try {
@@ -35,10 +37,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                 setUser(data.user);
             } else {
                 setUser(null);
+                resetAnalysisHistory();
             }
         } catch (error) {
             console.error("Session bootstrap failed:", error);
             setUser(null);
+            resetAnalysisHistory();
         } finally {
             if (initial) setIsLoading(false);
         }
@@ -58,6 +62,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
 
         setUser(null);
+        resetAnalysisHistory();
     };
 
     return (

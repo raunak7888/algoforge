@@ -1,6 +1,47 @@
-import { AnalysisRecordSchema, type CreateAnalysisInput } from "@algoforge/analysis";
+import {
+  AnalysisHistoryItemSchema,
+  AnalysisRecordSchema,
+  type AnalysisHistoryResponse,
+  type CreateAnalysisInput,
+} from "@algoforge/analysis";
 import { prisma } from "@algoforge/db";
 import { aiService } from "./ai.service";
+import {
+  decodeAnalysisCursor,
+  encodeAnalysisCursor,
+  type AnalysisHistoryQuery,
+} from "../validation/analysis";
+import { AppError } from "../utils/app-error";
+
+function serializeAnalysisRecord(analysis: {
+  id: string;
+  language: string;
+  result: unknown;
+  createdAt: Date;
+}) {
+  return AnalysisRecordSchema.parse({
+    id: analysis.id,
+    language: analysis.language,
+    result: analysis.result,
+    createdAt: analysis.createdAt.toISOString(),
+  });
+}
+
+function serializeHistoryItem(analysis: {
+  id: string;
+  language: string;
+  complexity: string | null;
+  suggestion: string | null;
+  createdAt: Date;
+}) {
+  return AnalysisHistoryItemSchema.parse({
+    id: analysis.id,
+    language: analysis.language,
+    complexity: analysis.complexity,
+    suggestion: analysis.suggestion,
+    createdAt: analysis.createdAt.toISOString(),
+  });
+}
 
 class AnalysisService {
   async createAnalysis(userId: string, input: CreateAnalysisInput) {
@@ -24,18 +65,65 @@ class AnalysisService {
       },
     });
 
-    return AnalysisRecordSchema.parse({
-      id: analysis.id,
-      language: analysis.language,
-      result: analysis.result,
-      createdAt: analysis.createdAt.toISOString(),
-    });
+    return serializeAnalysisRecord(analysis);
   }
 
-  async listUserAnalyses(userId: string) {
+  async listUserAnalyses(
+    userId: string,
+    query: AnalysisHistoryQuery,
+  ): Promise<AnalysisHistoryResponse> {
+    const cursor = query.cursor ? decodeAnalysisCursor(query.cursor) : null;
+    const take = query.limit + 1;
     const analyses = await prisma.analysis.findMany({
-      where: { userId },
-      orderBy: { createdAt: "desc" },
+      where: {
+        userId,
+        ...(cursor
+          ? {
+              OR: [
+                { createdAt: { lt: new Date(cursor.createdAt) } },
+                {
+                  createdAt: new Date(cursor.createdAt),
+                  id: { lt: cursor.id },
+                },
+              ],
+            }
+          : {}),
+      },
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      take,
+      select: {
+        id: true,
+        language: true,
+        complexity: true,
+        suggestion: true,
+        createdAt: true,
+      },
+    });
+
+    const hasMore = analyses.length > query.limit;
+    const page = hasMore ? analyses.slice(0, query.limit) : analyses;
+    const lastItem = page.at(-1);
+
+    return {
+      data: page.map(serializeHistoryItem),
+      meta: {
+        nextCursor: hasMore && lastItem
+          ? encodeAnalysisCursor({
+              createdAt: lastItem.createdAt.toISOString(),
+              id: lastItem.id,
+            })
+          : null,
+        hasMore,
+      },
+    };
+  }
+
+  async getUserAnalysisById(userId: string, analysisId: string) {
+    const analysis = await prisma.analysis.findFirst({
+      where: {
+        id: analysisId,
+        userId,
+      },
       select: {
         id: true,
         language: true,
@@ -44,14 +132,11 @@ class AnalysisService {
       },
     });
 
-    return analyses.map((analysis) =>
-      AnalysisRecordSchema.parse({
-        id: analysis.id,
-        language: analysis.language,
-        result: analysis.result,
-        createdAt: analysis.createdAt.toISOString(),
-      }),
-    );
+    if (!analysis) {
+      throw AppError.notFound("Analysis not found.");
+    }
+
+    return serializeAnalysisRecord(analysis);
   }
 }
 

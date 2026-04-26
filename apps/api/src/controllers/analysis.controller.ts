@@ -1,7 +1,8 @@
 import { Request, Response } from "express";
 import { analysisService } from "../services/analysis.service";
 import { asyncHandler } from "../utils/async-handler";
-import { parseAnalysisInput } from "../validation/analysis";
+import { ensureString } from "../validation/common";
+import { parseAnalysisHistoryQuery, parseAnalysisInput } from "../validation/analysis";
 
 class AnalysisController {
   createAnalysis = asyncHandler(async (req: Request, res: Response) => {
@@ -12,8 +13,16 @@ class AnalysisController {
   });
 
   listAnalyses = asyncHandler(async (req: Request, res: Response) => {
-    const analyses = await analysisService.listUserAnalyses(req.auth!.user.id);
-    res.json({ analyses });
+    const query = parseAnalysisHistoryQuery(req.query);
+    const analyses = await analysisService.listUserAnalyses(req.auth!.user.id, query);
+    res.json(analyses);
+  });
+
+  getAnalysisById = asyncHandler(async (req: Request, res: Response) => {
+    console.error("Getting analysis by id:", req.params.id);
+    const analysisId = ensureString(req.params.id, "Analysis id is required.");
+    const analysis = await analysisService.getUserAnalysisById(req.auth!.user.id, analysisId);
+    res.json(analysis);
   });
 }
 

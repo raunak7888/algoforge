@@ -6,6 +6,7 @@ import { requireCsrf } from "../middleware/csrf";
 const router = Router();
 
 router.get("/", requireAuth, analysisController.listAnalyses);
+router.get("/:id", requireAuth, analysisController.getAnalysisById);
 router.post("/", requireAuth, requireCsrf, analysisController.createAnalysis);
 
 export default router;

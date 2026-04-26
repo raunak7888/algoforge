@@ -28,6 +28,7 @@ app.get("/health", (_req, res) => {
 
 app.use("/api/auth", authRouter);
 app.use("/api/analysis", analysisRouter);
+app.use("/api/analyses", analysisRouter);
 
 app.use(notFoundHandler);
 app.use(errorHandler);

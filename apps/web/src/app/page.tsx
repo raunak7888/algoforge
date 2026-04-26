@@ -1,22 +1,55 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import type { AnalysisRecord } from "@algoforge/analysis";
+import Link from "next/link";
+import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/context/Authcontext";
+import { AnalysisHistoryList } from "@/components/AnalysisHistoryList";
 import { AnalysisResult } from "@/components/AnalysisResult";
+import { useAnalysisHistoryStore } from "@/store/analysis-history";
 import AnalysisForm from "../components/AnalysisForm";
 import LoginButton from "../components/LoginButton";
 
 export default function Home() {
   const { user, logout, isLoading } = useAuth();
-  const [analysisResult, setAnalysisResult] = useState<AnalysisRecord | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [authError, setAuthError] = useState<string | null>(null);
+  const orderedHistoryIds = useAnalysisHistoryStore((state) => state.orderedHistoryIds);
+  const historyById = useAnalysisHistoryStore((state) => state.historyById);
+  const analysesById = useAnalysisHistoryStore((state) => state.analysesById);
+  const activeAnalysisId = useAnalysisHistoryStore((state) => state.activeAnalysisId);
+  const pageError = useAnalysisHistoryStore((state) => state.pageError);
+  const hasMore = useAnalysisHistoryStore((state) => state.hasMore);
+  const isFetchingPage = useAnalysisHistoryStore((state) => state.isFetchingPage);
+  const fetchInitialPage = useAnalysisHistoryStore((state) => state.fetchInitialPage);
+  const fetchNextPage = useAnalysisHistoryStore((state) => state.fetchNextPage);
+  const cacheAnalysis = useAnalysisHistoryStore((state) => state.cacheAnalysis);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     setAuthError(params.get("authError"));
   }, []);
+
+  useEffect(() => {
+    if (!user) {
+      return;
+    }
+
+    void fetchInitialPage().catch((error) => {
+      console.error("Failed to hydrate analysis history:", error);
+    });
+  }, [fetchInitialPage, user]);
+
+  const historyItems = useMemo(
+    () =>
+      orderedHistoryIds.flatMap((id) => {
+        const item = historyById[id];
+        return item ? [item] : [];
+      }),
+    [historyById, orderedHistoryIds],
+  );
+
+  const activeAnalysis = activeAnalysisId ? analysesById[activeAnalysisId] ?? null : null;
+  const latestHistoryAnalysis = historyItems[0] ?? null;
 
   if (isLoading) {
     return (
@@ -42,35 +75,63 @@ export default function Home() {
   }
 
   return (
-    <div className="min-h-screen p-8">
-      <div className="max-w-4xl mx-auto">
-        <div className="flex justify-between items-center mb-8">
+    <div className="min-h-screen bg-slate-950 px-6 py-8 text-slate-100">
+      <div className="mx-auto max-w-6xl">
+        <div className="mb-8 flex flex-col justify-between gap-4 border-b border-slate-800 pb-6 md:flex-row md:items-center">
           <div>
             <h1 className="text-4xl font-bold">AlgoForge</h1>
-            <p className="text-gray-600">Welcome, {user.name || user.email || "there"}</p>
+            <p className="text-slate-400">Welcome, {user.name || user.email || "there"}</p>
           </div>
-          <button
-            onClick={() => void logout()}
-            className="px-4 py-2 bg-gray-200 rounded-lg hover:bg-gray-300"
-          >
-            Logout
-          </button>
+          <div className="flex items-center gap-3">
+            {latestHistoryAnalysis ? (
+              <Link
+                href={`/analysis/${latestHistoryAnalysis.id}`}
+                className="rounded-lg border border-slate-700 px-4 py-2 text-sm font-medium text-slate-200"
+              >
+                Open latest
+              </Link>
+            ) : null}
+            <button
+              onClick={() => void logout()}
+              className="rounded-lg border border-slate-700 px-4 py-2 text-sm font-medium text-slate-200"
+            >
+              Logout
+            </button>
+          </div>
         </div>
 
         {errorMessage ? (
-          <p className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+          <p className="mb-4 rounded-lg border border-red-900 bg-red-950/40 px-4 py-3 text-sm text-red-200">
             {errorMessage}
           </p>
         ) : null}
 
-        <AnalysisForm
-          onResult={(result) => {
-            setErrorMessage(null);
-            setAnalysisResult(result);
-          }}
-          onError={setErrorMessage}
-        />
-        {analysisResult && <AnalysisResult result={analysisResult} />}
+        <div className="grid gap-6 lg:grid-cols-[minmax(0,2fr)_minmax(320px,1fr)]">
+          <div>
+            <AnalysisForm
+              onResult={(result) => {
+                setErrorMessage(null);
+                cacheAnalysis(result);
+              }}
+              onError={setErrorMessage}
+            />
+            {activeAnalysis ? <AnalysisResult result={activeAnalysis} /> : null}
+          </div>
+          <div>
+            <AnalysisHistoryList
+              analyses={historyItems}
+              selectedId={activeAnalysisId}
+              isLoading={isFetchingPage}
+              hasMore={hasMore}
+              errorMessage={pageError}
+              onLoadMore={() => {
+                void fetchNextPage().catch((error) => {
+                  console.error("Failed to fetch the next analysis page:", error);
+                });
+              }}
+            />
+          </div>
+        </div>
       </div>
     </div>
   );

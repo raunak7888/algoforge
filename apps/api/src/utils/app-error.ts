@@ -19,6 +19,10 @@ export class AppError extends Error {
     return new AppError(403, message, "FORBIDDEN");
   }
 
+  static notFound(message: string): AppError {
+    return new AppError(404, message, "NOT_FOUND");
+  }
+
   static badGateway(message: string): AppError {
     return new AppError(502, message, "BAD_GATEWAY");
   }
