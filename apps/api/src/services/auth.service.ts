@@ -42,6 +42,7 @@ const googleClient = new OAuth2Client(
 const userSelect = {
   id: true,
   email: true,
+  username: true,
   name: true,
   image: true,
   role: true,

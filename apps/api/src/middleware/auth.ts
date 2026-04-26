@@ -5,13 +5,25 @@ import { authService } from "../services/auth.service";
 import { AppError } from "../utils/app-error";
 import { getCookie } from "../utils/cookies";
 
+export function getToken(req: Request): string | null {
+  const cookieToken = getCookie(req, authCookies.accessToken);
+  if (cookieToken) return cookieToken;
+
+  const authHeader = req.headers.authorization;
+  if (authHeader?.startsWith("Bearer ")) {
+    return authHeader.split(" ")[1];
+  }
+
+  return null;
+}
+
 export async function requireAuth(
   req: Request,
   _res: Response,
   next: NextFunction,
 ): Promise<void> {
   try {
-    const accessToken = getCookie(req, authCookies.accessToken);
+    const accessToken = getToken(req);
 
     if (!accessToken) {
       return next(AppError.unauthorized("Authentication required."));

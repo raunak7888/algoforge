@@ -2,6 +2,7 @@ import { Request, Response } from "express";
 import { prisma } from "@algoforge/db";
 import { authCookies, env } from "../config/env";
 import { authService } from "../services/auth.service";
+import { userService } from "../services/user.service";
 import { AppError } from "../utils/app-error";
 import { asyncHandler } from "../utils/async-handler";
 import {
@@ -11,6 +12,7 @@ import {
   setAuthCookies,
   setOAuthStateCookie,
 } from "../utils/cookies";
+import { getToken } from "../middleware/auth";
 import { ensureString } from "../validation/common";
 
 class AuthController {
@@ -100,7 +102,17 @@ class AuthController {
     res.json({ users });
   });
 
-  
+  getMe = asyncHandler(async (req: Request, res: Response) => {
+    const accessToken = getToken(req);
+    
+    if (!accessToken) {
+      res.json({ user: null });
+      return;
+    }
+
+    const user = await userService.getUserByToken(accessToken);
+    res.json({ user });
+  });
 }
 
 export const authController = new AuthController();

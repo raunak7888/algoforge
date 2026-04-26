@@ -4,7 +4,7 @@ import type { Metadata } from "next";
 
 async function getAnalysis(shareId: string) {
   const res = await fetch(`${API_URL}/api/share/${shareId}`, {
-    next: { revalidate: 3600 }, // Cache for 1 hour
+    cache: 'no-store',
   });
 
   if (!res.ok) {

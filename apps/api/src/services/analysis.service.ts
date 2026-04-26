@@ -1,6 +1,7 @@
 import {
   AnalysisHistoryItemSchema,
   AnalysisRecordSchema,
+  SharedAnalysisSchema,
   type AnalysisHistoryResponse,
   type CreateAnalysisInput,
 } from "@algoforge/analysis";
@@ -175,11 +176,20 @@ class AnalysisService {
     const analysis = await (prisma.analysis.findUnique as any)({
       where: { shareId } as any,
       select: {
+        id: true,
         code: true,
         language: true,
         result: true,
         createdAt: true,
         isPublic: true,
+        user: {
+          select: {
+            id: true,
+            name: true,
+            username: true,
+            image: true,
+          },
+        },
       },
     });
 
@@ -191,12 +201,19 @@ class AnalysisService {
       throw AppError.forbidden("This analysis is not public.");
     }
 
-    return {
+    return SharedAnalysisSchema.parse({
+      id: analysis.id,
       code: analysis.code,
       language: analysis.language,
       result: analysis.result,
       createdAt: analysis.createdAt.toISOString(),
-    };
+      creator: analysis.user ? {
+        id: analysis.user.id,
+        name: analysis.user.name,
+        username: analysis.user.username || analysis.user.name,
+        avatarUrl: analysis.user.image,
+      } : undefined,
+    });
   }
 }
 

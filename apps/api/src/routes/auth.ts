@@ -8,6 +8,7 @@ const router = Router();
 
 router.get("/google/start", authController.startGoogleAuth);
 router.get("/google/callback", authController.handleGoogleCallback);
+router.get("/me", authController.getMe);
 router.get("/session", requireAuth, authController.getSession);
 router.post("/refresh", requireCsrf, authController.refreshSession);
 router.post("/logout", requireCsrf, authController.logout);

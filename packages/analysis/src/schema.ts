@@ -32,6 +32,13 @@ export const ComparisonSchema = z.object({
   improvementSummary: z.string().min(1),
 });
 
+export const SafeUserSchema = z.object({
+  id: z.string(),
+  name: z.string().nullable(),
+  username: z.string().nullable(),
+  avatarUrl: z.string().nullable().optional(),
+});
+
 export const AnalysisResultSchema = z.object({
   summary: z.string().min(1),
   complexity: ComplexitySchema,
@@ -56,6 +63,16 @@ export const AnalysisRecordSchema = z.object({
   language: AnalysisLanguageSchema,
   result: AnalysisResultSchema,
   createdAt: z.string().datetime(),
+  creator: SafeUserSchema.optional(),
+});
+
+export const SharedAnalysisSchema = z.object({
+  id: z.string(),
+  code: z.string(),
+  language: AnalysisLanguageSchema,
+  result: AnalysisResultSchema,
+  createdAt: z.string().datetime(),
+  creator: SafeUserSchema.optional(),
 });
 
 export const AnalysisHistoryItemSchema = z.object({
@@ -76,9 +93,11 @@ export const AnalysisHistoryResponseSchema = z.object({
   meta: AnalysisHistoryMetaSchema,
 });
 
+export type SafeUser = z.infer<typeof SafeUserSchema>;
 export type AnalysisLanguage = z.infer<typeof AnalysisLanguageSchema>;
 export type AnalysisResult = z.infer<typeof AnalysisResultSchema>;
 export type CreateAnalysisInput = z.infer<typeof CreateAnalysisInputSchema>;
 export type AnalysisRecord = z.infer<typeof AnalysisRecordSchema>;
+export type SharedAnalysis = z.infer<typeof SharedAnalysisSchema>;
 export type AnalysisHistoryItem = z.infer<typeof AnalysisHistoryItemSchema>;
 export type AnalysisHistoryResponse = z.infer<typeof AnalysisHistoryResponseSchema>;

@@ -1,19 +1,12 @@
 "use client";
 
 import React, { createContext, useContext, useEffect, useState } from "react";
+import { type SafeUser } from "@algoforge/analysis";
 import { apiFetch } from "@/lib/api";
 import { useAnalysisHistoryStore } from "@/store/analysis-history";
 
-interface User {
-    id: string;
-    email: string | null;
-    name: string | null;
-    image: string | null;
-    role: "USER" | "ADMIN";
-}
-
 interface AuthContextType {
-    user: User | null;
+    user: SafeUser | null;
     logout: () => Promise<void>;
     hydrateSession: () => Promise<void>;
     isLoading: boolean;
@@ -22,7 +15,7 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-    const [user, setUser] = useState<User | null>(null);
+    const [user, setUser] = useState<SafeUser | null>(null);
     const [isLoading, setIsLoading] = useState(true);
     const resetAnalysisHistory = useAnalysisHistoryStore((state) => state.reset);
 
@@ -30,14 +23,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         try {
             if (initial) setIsLoading(true);
 
-            const response = await apiFetch("/api/auth/session");
+            // Using /api/auth/me as per new requirements for safe user profile
+            const response = await apiFetch("/api/auth/me");
 
             if (response.ok) {
                 const data = await response.json();
                 setUser(data.user);
             } else {
                 setUser(null);
-                resetAnalysisHistory();
+                if (initial) resetAnalysisHistory();
             }
         } catch (error) {
             console.error("Session bootstrap failed:", error);

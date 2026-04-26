@@ -78,22 +78,40 @@ export default function Home() {
     <div className="min-h-screen bg-slate-950 px-6 py-8 text-slate-100">
       <div className="mx-auto max-w-6xl">
         <div className="mb-8 flex flex-col justify-between gap-4 border-b border-slate-800 pb-6 md:flex-row md:items-center">
-          <div>
-            <h1 className="text-4xl font-bold">AlgoForge</h1>
-            <p className="text-slate-400">Welcome, {user.name || user.email || "there"}</p>
+          <div className="flex items-center gap-4">
+            {user.avatarUrl ? (
+              <img 
+                src={user.avatarUrl} 
+                alt={user.name || "User"} 
+                className="h-12 w-12 rounded-full border-2 border-cyan-500/50 shadow-[0_0_10px_rgba(6,182,212,0.3)]"
+              />
+            ) : (
+              <div className="flex h-12 w-12 items-center justify-center rounded-full border-2 border-slate-700 bg-slate-800 text-lg font-bold text-slate-400">
+                {(user.name || user.username || "?")[0].toUpperCase()}
+              </div>
+            )}
+            <div>
+              <h1 className="text-3xl font-bold bg-gradient-to-r from-white to-slate-400 bg-clip-text text-transparent">AlgoForge</h1>
+              <div className="flex items-center gap-2">
+                <p className="text-slate-200 font-medium">{user.name}</p>
+                {user.username && (
+                  <p className="text-sm text-slate-500">@{user.username}</p>
+                )}
+              </div>
+            </div>
           </div>
           <div className="flex items-center gap-3">
             {latestHistoryAnalysis ? (
               <Link
                 href={`/analysis/${latestHistoryAnalysis.id}`}
-                className="rounded-lg border border-slate-700 px-4 py-2 text-sm font-medium text-slate-200"
+                className="rounded-lg border border-slate-700 bg-slate-900/50 px-4 py-2 text-sm font-medium text-slate-200 transition-colors hover:bg-slate-800"
               >
                 Open latest
               </Link>
             ) : null}
             <button
               onClick={() => void logout()}
-              className="rounded-lg border border-slate-700 px-4 py-2 text-sm font-medium text-slate-200"
+              className="rounded-lg border border-slate-700 bg-slate-900/50 px-4 py-2 text-sm font-medium text-slate-200 transition-colors hover:bg-red-950/30 hover:border-red-900/50"
             >
               Logout
             </button>
