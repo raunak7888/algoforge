@@ -53,6 +53,8 @@ export const GuardRangesSchema = z.object({
   startNode: z.enum(["first", "random"]).optional(),
 });
 
+export const InputSchema = z.record(z.string(), z.unknown());
+
 export const CreateCategorySchema = z.object({
   id: z.string().min(1).max(50).optional(), // ✅ optional
   label: z.string().min(1).max(100),
@@ -68,21 +70,61 @@ export const CreateAlgorithmSchema = z.object({
   name: z.string().min(1).max(200),
   description: z.string().min(1).max(2000),
   categoryId: z.string().min(1),
-  forgeCode: ForgeCodeSchema,
-  inputSchema: z.record(z.string(), z.unknown()),
-  guardRanges: GuardRangesSchema,
-  timeComplexity: z.string().max(100).optional(),
-  spaceComplexity: z.string().max(100).optional(),
   difficulty: DifficultySchema.default("beginner"),
-  tags: z.array(z.string().max(50)).default([]),
-  isPublished: z.boolean().default(false),
+  isPublished: z.boolean().default(false).optional(),
+
+  complexity: z.object({
+    time: z.object({
+      best: z.string(),
+      average: z.string(),
+      worst: z.string(),
+    }),
+    space: z.string(),
+  }),
+
+  displayCode: z.object({
+    code: z.string(),
+    language: z.string(),
+  }),
+
+  forge: z.object({
+    forgeCode: ForgeCodeSchema,
+    inputSchema: InputSchema,
+    guardRanges: GuardRangesSchema,
+  }),
+
+  tags: z.array(z.string()),
 });
 
-export const UpdateAlgorithmSchema = CreateAlgorithmSchema.partial().omit({ slug: true });
+export const UpdateAlgorithmSchema = z.object({
+  slug: z.string().min(1).max(100).regex(/^[a-z0-9-]+$/).optional(),
+  name: z.string().min(1).max(200).optional(),
+  description: z.string().min(1).max(2000).optional(),
+  categoryId: z.string().min(1).optional(),
+  difficulty: DifficultySchema.optional(),
+  isPublished: z.boolean().optional(),
 
-export const CreateSnapshotSchema = z.object({
-  algorithmId: z.string().uuid(),
-  input: z.record(z.string(), z.unknown()),
+  complexity: z.object({
+    time: z.object({
+      best: z.string().optional(),
+      average: z.string().optional(),
+      worst: z.string().optional(),
+    }).optional(),
+    space: z.string().optional(),
+  }).optional(),
+
+  displayCode: z.object({
+    code: z.string().optional(),
+    language: z.string().optional(),
+  }).optional(),
+
+  forge: z.object({
+    forgeCode: ForgeCodeSchema.optional(),
+    inputSchema: InputSchema.optional(),
+    guardRanges: GuardRangesSchema.optional(),
+  }).optional(),
+
+  tags: z.array(z.string()).optional(),
 });
 
 export const CategoryResponseSchema = z.object({
@@ -95,38 +137,70 @@ export const CategoryResponseSchema = z.object({
   updatedAt: z.string().datetime(),
 });
 
-export const AlgorithmResponseSchema = z.object({
+export const AlgorithmListItemSchema = z.object({
+  id: z.string(),
+  slug: z.string(),
+  name: z.string(),
+  categoryId: z.string(),
+  difficulty: DifficultySchema,
+  complexity: z.object({
+    timeBest: z.string().nullable(),
+    timeAverage: z.string().nullable(),
+    timeWorst: z.string().nullable(),
+    space: z.string().nullable(),
+  }).nullable()
+});
+
+export const AlgorithmDetailSchema = z.object({
   id: z.string(),
   slug: z.string(),
   name: z.string(),
   description: z.string(),
-  categoryId: z.string(),
-  forgeCode: ForgeCodeSchema,
-  inputSchema: z.record(z.string(), z.unknown()),
-  guardRanges: GuardRangesSchema,
-  timeComplexity: z.string().nullable(),
-  spaceComplexity: z.string().nullable(),
   difficulty: DifficultySchema,
-  tags: z.array(z.string()),
-  isPublished: z.boolean(),
-  createdAt: z.string().datetime(),
-  updatedAt: z.string().datetime(),
+  complexity: z.object({
+    timeBest: z.string().nullable(),
+    timeAverage: z.string().nullable(),
+    timeWorst: z.string().nullable(),
+    space: z.string().nullable(),
+  }).nullable(),
+  displayCode: z.object({
+    language: z.string(),
+    code: z.string(),
+  }).nullable(),
+  tags: z.array(z.object({
+    id: z.string(),
+    label: z.string()
+  })),
+  forge: z.object({
+    forgeCode: ForgeCodeSchema,
+    inputSchema: InputSchema,
+    guardRanges: GuardRangesSchema,
+    version: z.number().optional(),
+  }).nullable().optional(),
 });
 
-export const SnapshotResponseSchema = z.object({
-  id: z.string(),
-  algorithmId: z.string(),
-  input: z.record(z.string(), z.unknown()),
-  steps: z.array(z.unknown()),
-  executionTimeMs: z.number(),
-  createdAt: z.string().datetime(),
-});
+export const AlgorithmExecutionSchema = z.union([
+  z.object({
+    algorithmId: z.string(),
+    name: z.string(),
+    forge: z.object({
+      forgeCode: ForgeCodeSchema,
+      inputSchema: InputSchema,
+      guardRanges: GuardRangesSchema,
+      version: z.number().optional()
+    })
+  }),
+  z.object({
+    status: z.literal("INCOMPLETE_ALGORITHM"),
+    message: z.string()
+  })
+]);
 
 export type CreateCategory = z.infer<typeof CreateCategorySchema>;
 export type UpdateCategory = z.infer<typeof UpdateCategorySchema>;
 export type CreateAlgorithm = z.infer<typeof CreateAlgorithmSchema>;
 export type UpdateAlgorithm = z.infer<typeof UpdateAlgorithmSchema>;
-export type CreateSnapshot = z.infer<typeof CreateSnapshotSchema>;
 export type CategoryResponse = z.infer<typeof CategoryResponseSchema>;
-export type AlgorithmResponse = z.infer<typeof AlgorithmResponseSchema>;
-export type SnapshotResponse = z.infer<typeof SnapshotResponseSchema>;
+export type AlgorithmListItem = z.infer<typeof AlgorithmListItemSchema>;
+export type AlgorithmDetail = z.infer<typeof AlgorithmDetailSchema>;
+export type AlgorithmExecution = z.infer<typeof AlgorithmExecutionSchema>;

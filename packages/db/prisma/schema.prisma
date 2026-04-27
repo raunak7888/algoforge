@@ -100,32 +100,66 @@ model Algorithm {
   name            String
   description     String
   categoryId      String
-  forgeCode       Json
-  inputSchema     Json
-  guardRanges     Json
-  timeComplexity  String?
-  spaceComplexity String?
   difficulty      Difficulty @default(beginner)
-  tags            String[]   @default([])
   isPublished     Boolean    @default(false)
   createdAt       DateTime   @default(now())
   updatedAt       DateTime   @updatedAt
+
   category        Category   @relation(fields: [categoryId], references: [id])
-  snapshots       Snapshot[]
+  complexity      Complexity?
+  displayCode     DisplayCode?
+  forge           AlgorithmForge?
+  tags            AlgorithmTag[]
 
   @@index([categoryId])
   @@index([slug])
+  @@index([difficulty])
   @@index([isPublished])
 }
 
-model Snapshot {
-  id              String    @id @default(uuid())
-  algorithmId     String
-  input           Json
-  steps           Json
-  executionTimeMs Int
-  createdAt       DateTime  @default(now())
-  algorithm       Algorithm @relation(fields: [algorithmId], references: [id], onDelete: Cascade)
+model Complexity {
+  id            String    @id @default(uuid())
+  algorithmId   String    @unique
+  timeBest      String?
+  timeAverage   String?
+  timeWorst     String?
+  space         String?
 
-  @@index([algorithmId, createdAt])
+  algorithm     Algorithm @relation(fields: [algorithmId], references: [id], onDelete: Cascade)
+}
+
+model DisplayCode {
+  id            String    @id @default(uuid())
+  algorithmId   String    @unique
+  language      String
+  code          String
+
+  algorithm     Algorithm @relation(fields: [algorithmId], references: [id], onDelete: Cascade)
+}
+
+model AlgorithmForge {
+  id            String    @id @default(uuid())
+  algorithmId   String    @unique
+  forgeCode     Json
+  inputSchema   Json
+  guardRanges   Json
+  version       Int       @default(1)
+
+  algorithm     Algorithm @relation(fields: [algorithmId], references: [id], onDelete: Cascade)
+}
+
+model Tag {
+  id            String    @id @default(uuid())
+  label         String    @unique
+  algorithms    AlgorithmTag[]
+}
+
+model AlgorithmTag {
+  algorithmId   String
+  tagId         String
+
+  algorithm     Algorithm @relation(fields: [algorithmId], references: [id], onDelete: Cascade)
+  tag           Tag       @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([algorithmId, tagId])
 }

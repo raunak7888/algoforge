@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { Role } from "@algoforge/db";
+// import { Role } from "@algoforge/db";
 import { authController } from "../controllers/auth.controller";
 import { requireAuth, requireRoles } from "../middleware/auth";
 import { requireCsrf } from "../middleware/csrf";
@@ -13,6 +13,6 @@ router.get("/session", requireAuth, authController.getSession);
 router.post("/refresh", requireCsrf, authController.refreshSession);
 router.post("/logout", requireCsrf, authController.logout);
 router.post("/logout-all", requireAuth, requireCsrf, authController.logoutAll);
-router.get("/admin/users", requireAuth, requireRoles(Role.ADMIN), authController.listUsers);
+// router.get("/admin/users", requireAuth, requireRoles(Role.ADMIN), authController.listUsers);
 
 export default router;

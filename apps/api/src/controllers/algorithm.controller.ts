@@ -30,20 +30,23 @@ class AlgorithmController {
         res.json(algorithm);
     });
 
+    getVisualize = asyncHandler(async (req: Request, res: Response) => {
+        const id = ensureString(req.params.id, "Algorithm ID is required.");
+        const execution = await algorithmService.getAlgorithmExecution(id);
+        res.json(execution);
+    });
+
     create = asyncHandler(async (req: Request, res: Response) => {
-        console.log(req.body);
-        console.log("_____________________________________________________________________")
         const input = parseCreateAlgorithm(req.body);
-        console.log(input);
-        const algorithm = await algorithmService.createAlgorithm(input);
-        res.status(201).json(algorithm);
+        const createdAlgorithm = await algorithmService.createAlgorithm(input);
+        res.status(201).json(createdAlgorithm);
     });
 
     update = asyncHandler(async (req: Request, res: Response) => {
         const id = ensureString(req.params.id, "Algorithm ID is required.");
         const input = parseUpdateAlgorithm(req.body);
-        const algorithm = await algorithmService.updateAlgorithm(id, input);
-        res.json(algorithm);
+        const updatedAlgorithm = await algorithmService.updateAlgorithm(id, input);
+        res.status(200).json(updatedAlgorithm);
     });
 
     delete = asyncHandler(async (req: Request, res: Response) => {

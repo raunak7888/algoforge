@@ -1,9 +1,16 @@
-import { prisma } from "@algoforge/db";
+import { prisma, Prisma } from "@algoforge/db";
 import {
-  AlgorithmResponseSchema,
+  AlgorithmListItemSchema,
+  AlgorithmDetailSchema,
+  AlgorithmExecutionSchema,
+  ForgeCodeSchema,
+  GuardRangesSchema,
+  InputSchema,
   type CreateAlgorithm,
   type UpdateAlgorithm,
-  type AlgorithmResponse,
+  type AlgorithmListItem,
+  type AlgorithmDetail,
+  type AlgorithmExecution,
 } from "@algoforge/forge";
 import { AppError } from "../utils/app-error";
 
@@ -14,44 +21,8 @@ export type AlgorithmQuery = {
   search?: string;
 };
 
-function serializeAlgorithm(algorithm: {
-  id: string;
-  slug: string;
-  name: string;
-  description: string;
-  categoryId: string;
-  forgeCode: unknown;
-  inputSchema: unknown;
-  guardRanges: unknown;
-  timeComplexity: string | null;
-  spaceComplexity: string | null;
-  difficulty: string;
-  tags: string[];
-  isPublished: boolean;
-  createdAt: Date;
-  updatedAt: Date;
-}): AlgorithmResponse {
-  return AlgorithmResponseSchema.parse({
-    id: algorithm.id,
-    slug: algorithm.slug,
-    name: algorithm.name,
-    description: algorithm.description,
-    categoryId: algorithm.categoryId,
-    forgeCode: algorithm.forgeCode,
-    inputSchema: algorithm.inputSchema,
-    guardRanges: algorithm.guardRanges,
-    timeComplexity: algorithm.timeComplexity,
-    spaceComplexity: algorithm.spaceComplexity,
-    difficulty: algorithm.difficulty,
-    tags: algorithm.tags,
-    isPublished: algorithm.isPublished,
-    createdAt: algorithm.createdAt.toISOString(),
-    updatedAt: algorithm.updatedAt.toISOString(),
-  });
-}
-
 class AlgorithmService {
-  async listAlgorithms(query: AlgorithmQuery): Promise<AlgorithmResponse[]> {
+  async listAlgorithms(query: AlgorithmQuery): Promise<AlgorithmListItem[]> {
     const where: any = {};
 
     if (query.categoryId) {
@@ -70,43 +41,169 @@ class AlgorithmService {
       where.OR = [
         { name: { contains: query.search, mode: "insensitive" } },
         { description: { contains: query.search, mode: "insensitive" } },
-        { tags: { has: query.search } },
+        { tags: { some: { tag: { label: { contains: query.search, mode: "insensitive" } } } } },
       ];
     }
 
     const algorithms = await prisma.algorithm.findMany({
       where,
+      select: {
+        id: true,
+        slug: true,
+        name: true,
+        categoryId: true,
+        difficulty: true,
+        complexity: {
+          select: {
+            timeBest: true,
+            timeAverage: true,
+            timeWorst: true,
+            space: true,
+          }
+        }
+      },
       orderBy: { createdAt: "desc" },
     });
 
-    return algorithms.map(serializeAlgorithm);
+    return algorithms.map((alg) => AlgorithmListItemSchema.parse(alg));
   }
 
-  async getAlgorithmById(id: string): Promise<AlgorithmResponse> {
+  async getAlgorithmById(id: string): Promise<AlgorithmDetail> {
     const algorithm = await prisma.algorithm.findUnique({
       where: { id },
+      select: {
+        id: true,
+        slug: true,
+        name: true,
+        description: true,
+        difficulty: true,
+        complexity: {
+          select: {
+            timeBest: true,
+            timeAverage: true,
+            timeWorst: true,
+            space: true,
+          }
+        },
+        displayCode: {
+          select: {
+            language: true,
+            code: true,
+          }
+        },
+        tags: {
+          select: {
+            tag: {
+              select: {
+                id: true,
+                label: true,
+              }
+            }
+          }
+        }
+      }
     });
 
     if (!algorithm) {
       throw AppError.notFound("Algorithm not found.");
     }
 
-    return serializeAlgorithm(algorithm);
+    return AlgorithmDetailSchema.parse({
+      ...algorithm,
+      tags: algorithm.tags.map(t => t.tag)
+    });
   }
 
-  async getAlgorithmBySlug(slug: string): Promise<AlgorithmResponse> {
+  async getAlgorithmBySlug(slug: string): Promise<AlgorithmDetail> {
     const algorithm = await prisma.algorithm.findUnique({
       where: { slug },
+      select: {
+        id: true,
+        slug: true,
+        name: true,
+        description: true,
+        difficulty: true,
+        complexity: {
+          select: {
+            timeBest: true,
+            timeAverage: true,
+            timeWorst: true,
+            space: true,
+          }
+        },
+        displayCode: {
+          select: {
+            language: true,
+            code: true,
+          }
+        },
+        tags: {
+          select: {
+            tag: {
+              select: {
+                id: true,
+                label: true,
+              }
+            }
+          }
+        }
+      }
     });
 
     if (!algorithm) {
       throw AppError.notFound("Algorithm not found.");
     }
 
-    return serializeAlgorithm(algorithm);
+    return AlgorithmDetailSchema.parse({
+      ...algorithm,
+      tags: algorithm.tags.map(t => t.tag)
+    });
   }
 
-  async createAlgorithm(input: CreateAlgorithm): Promise<AlgorithmResponse> {
+  async getAlgorithmExecution(id: string): Promise<AlgorithmExecution> {
+    const algorithm = await prisma.algorithm.findUnique({
+      where: { id },
+      include: {
+        forge: true
+      }
+    });
+
+    if (!algorithm) {
+      throw AppError.notFound("Algorithm not found.");
+    }
+
+    if (!algorithm.forge) {
+      if (algorithm.isPublished) {
+        console.error(`[Data Integrity Error] Published algorithm ${algorithm.id} is missing forge data.`);
+      }
+      return AlgorithmExecutionSchema.parse({
+        status: "INCOMPLETE_ALGORITHM",
+        message: "Algorithm has no visualization data"
+      });
+    }
+
+    try {
+      ForgeCodeSchema.parse(algorithm.forge.forgeCode);
+      GuardRangesSchema.parse(algorithm.forge.guardRanges);
+      InputSchema.parse(algorithm.forge.inputSchema);
+    } catch (error) {
+      console.error(`[Data Integrity Error] Corrupted forge data for algorithm ${algorithm.id}:`, error instanceof Error ? error.message : "Unknown error");
+      throw AppError.internal("Invalid forge configuration stored in database");
+    }
+
+    return AlgorithmExecutionSchema.parse({
+      algorithmId: algorithm.id,
+      name: algorithm.name,
+      forge: {
+        forgeCode: algorithm.forge.forgeCode,
+        inputSchema: algorithm.forge.inputSchema,
+        guardRanges: algorithm.forge.guardRanges,
+        version: algorithm.forge.version
+      }
+    });
+  }
+
+  async createAlgorithm(input: CreateAlgorithm): Promise<AlgorithmDetail> {
     const existing = await prisma.algorithm.findUnique({
       where: { slug: input.slug },
     });
@@ -115,23 +212,232 @@ class AlgorithmService {
       throw AppError.badRequest("Algorithm with this slug already exists.");
     }
 
-    const algorithm = await prisma.algorithm.create({
-      data: input as any,
+    // Explicitly validate forge configurations
+    try {
+      ForgeCodeSchema.parse(input.forge.forgeCode);
+      GuardRangesSchema.parse(input.forge.guardRanges);
+    } catch (error: unknown) {
+      throw AppError.badRequest(
+        "Invalid forge configuration: " + (error instanceof Error ? error.message : "Unknown error")
+      );
+    }
+
+    const createdAlgorithm = await prisma.algorithm.create({
+      data: {
+        slug: input.slug,
+        name: input.name,
+        description: input.description,
+        categoryId: input.categoryId,
+        difficulty: input.difficulty,
+        isPublished: input.isPublished ?? false,
+        complexity: {
+          create: {
+            timeBest: input.complexity.time.best,
+            timeAverage: input.complexity.time.average,
+            timeWorst: input.complexity.time.worst,
+            space: input.complexity.space,
+          },
+        },
+        displayCode: {
+          create: {
+            language: input.displayCode.language,
+            code: input.displayCode.code,
+          },
+        },
+        forge: {
+          create: {
+            forgeCode: input.forge.forgeCode as unknown as Prisma.InputJsonValue,
+            inputSchema: input.forge.inputSchema as unknown as Prisma.InputJsonValue,
+            guardRanges: input.forge.guardRanges as unknown as Prisma.InputJsonValue,
+          },
+        },
+        tags: {
+          create: input.tags.map((tagLabel) => ({
+            tag: {
+              connectOrCreate: {
+                where: { label: tagLabel },
+                create: { label: tagLabel },
+              },
+            },
+          })),
+        },
+      },
+      include: {
+        complexity: true,
+        displayCode: true,
+        forge: true,
+        tags: {
+          include: {
+            tag: true,
+          },
+        },
+      },
     });
 
-    return serializeAlgorithm(algorithm);
+    return AlgorithmDetailSchema.parse({
+      id: createdAlgorithm.id,
+      slug: createdAlgorithm.slug,
+      name: createdAlgorithm.name,
+      description: createdAlgorithm.description,
+      difficulty: createdAlgorithm.difficulty,
+      complexity: {
+        timeBest: createdAlgorithm.complexity?.timeBest ?? null,
+        timeAverage: createdAlgorithm.complexity?.timeAverage ?? null,
+        timeWorst: createdAlgorithm.complexity?.timeWorst ?? null,
+        space: createdAlgorithm.complexity?.space ?? null,
+      },
+      displayCode: createdAlgorithm.displayCode
+        ? {
+            language: createdAlgorithm.displayCode.language,
+            code: createdAlgorithm.displayCode.code,
+          }
+        : null,
+      tags: createdAlgorithm.tags.map((t) => t.tag),
+    });
   }
 
-  async updateAlgorithm(
-    id: string,
-    input: UpdateAlgorithm
-  ): Promise<AlgorithmResponse> {
-    const algorithm = await prisma.algorithm.update({
+  async updateAlgorithm(id: string, input: UpdateAlgorithm): Promise<AlgorithmDetail> {
+    const existing = await prisma.algorithm.findUnique({
       where: { id },
-      data: input as any,
+      include: {
+        complexity: true,
+        displayCode: true,
+        forge: true,
+        tags: true,
+      }
     });
 
-    return serializeAlgorithm(algorithm);
+    if (!existing) {
+      throw AppError.notFound("Algorithm not found.");
+    }
+
+    if (input.forge) {
+      try {
+        if (input.forge.forgeCode) ForgeCodeSchema.parse(input.forge.forgeCode);
+        if (input.forge.guardRanges) GuardRangesSchema.parse(input.forge.guardRanges);
+        if (input.forge.inputSchema) InputSchema.parse(input.forge.inputSchema);
+      } catch (error: unknown) {
+        throw AppError.badRequest(
+          "Invalid forge configuration: " + (error instanceof Error ? error.message : "Unknown error")
+        );
+      }
+    }
+
+    const updatedAlgorithm = await prisma.$transaction(async (tx) => {
+      const data: Prisma.AlgorithmUpdateInput = {};
+
+      if (input.slug !== undefined) data.slug = input.slug;
+      if (input.name !== undefined) data.name = input.name;
+      if (input.description !== undefined) data.description = input.description;
+      if (input.categoryId !== undefined) data.category = { connect: { id: input.categoryId } };
+      if (input.difficulty !== undefined) data.difficulty = input.difficulty;
+      if (input.isPublished !== undefined) data.isPublished = input.isPublished;
+
+      if (input.complexity) {
+        data.complexity = {
+          upsert: {
+            create: {
+              timeBest: input.complexity.time?.best ?? existing.complexity?.timeBest ?? null,
+              timeAverage: input.complexity.time?.average ?? existing.complexity?.timeAverage ?? null,
+              timeWorst: input.complexity.time?.worst ?? existing.complexity?.timeWorst ?? null,
+              space: input.complexity.space ?? existing.complexity?.space ?? null,
+            },
+            update: {
+              timeBest: input.complexity.time?.best,
+              timeAverage: input.complexity.time?.average,
+              timeWorst: input.complexity.time?.worst,
+              space: input.complexity.space,
+            }
+          }
+        };
+      }
+
+      if (input.displayCode) {
+        data.displayCode = {
+          upsert: {
+            create: {
+              language: input.displayCode.language ?? existing.displayCode?.language ?? "js",
+              code: input.displayCode.code ?? existing.displayCode?.code ?? "",
+            },
+            update: {
+              language: input.displayCode.language,
+              code: input.displayCode.code,
+            }
+          }
+        };
+      }
+
+      if (input.forge) {
+        data.forge = {
+          upsert: {
+            create: {
+              forgeCode: (input.forge.forgeCode ?? existing.forge?.forgeCode ?? {}) as unknown as Prisma.InputJsonValue,
+              inputSchema: (input.forge.inputSchema ?? existing.forge?.inputSchema ?? {}) as unknown as Prisma.InputJsonValue,
+              guardRanges: (input.forge.guardRanges ?? existing.forge?.guardRanges ?? {}) as unknown as Prisma.InputJsonValue,
+            },
+            update: {
+              ...(input.forge.forgeCode ? { forgeCode: input.forge.forgeCode as unknown as Prisma.InputJsonValue } : {}),
+              ...(input.forge.inputSchema ? { inputSchema: input.forge.inputSchema as unknown as Prisma.InputJsonValue } : {}),
+              ...(input.forge.guardRanges ? { guardRanges: input.forge.guardRanges as unknown as Prisma.InputJsonValue } : {}),
+            }
+          }
+        };
+      }
+
+      if (input.tags) {
+        data.tags = {
+          deleteMany: {},
+          create: input.tags.map((tagLabel) => ({
+            tag: {
+              connectOrCreate: {
+                where: { label: tagLabel },
+                create: { label: tagLabel },
+              },
+            },
+          })),
+        };
+      }
+
+      return tx.algorithm.update({
+        where: { id },
+        data,
+        include: {
+          complexity: true,
+          displayCode: true,
+          forge: true,
+          tags: {
+            include: { tag: true }
+          }
+        }
+      });
+    });
+
+    return AlgorithmDetailSchema.parse({
+      id: updatedAlgorithm.id,
+      slug: updatedAlgorithm.slug,
+      name: updatedAlgorithm.name,
+      description: updatedAlgorithm.description,
+      difficulty: updatedAlgorithm.difficulty,
+      complexity: {
+        timeBest: updatedAlgorithm.complexity?.timeBest ?? null,
+        timeAverage: updatedAlgorithm.complexity?.timeAverage ?? null,
+        timeWorst: updatedAlgorithm.complexity?.timeWorst ?? null,
+        space: updatedAlgorithm.complexity?.space ?? null,
+      },
+      displayCode: updatedAlgorithm.displayCode
+        ? {
+            language: updatedAlgorithm.displayCode.language,
+            code: updatedAlgorithm.displayCode.code,
+          }
+        : null,
+      tags: updatedAlgorithm.tags.map((t) => t.tag),
+      forge: updatedAlgorithm.forge ? {
+        forgeCode: updatedAlgorithm.forge.forgeCode,
+        inputSchema: updatedAlgorithm.forge.inputSchema,
+        guardRanges: updatedAlgorithm.forge.guardRanges,
+        version: updatedAlgorithm.forge.version,
+      } : null,
+    });
   }
 
   async deleteAlgorithm(id: string): Promise<void> {

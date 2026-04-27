@@ -9,7 +9,6 @@ import authRouter from "./routes/auth";
 import shareRouter from "./routes/share";
 import categoryRouter from "./routes/category";
 import algorithmRouter from "./routes/algorithm";
-import snapshotRouter from "./routes/snapshot";
 
 const app = express();
 
@@ -36,7 +35,6 @@ app.use("/api/analyses", analysisRouter);
 app.use("/api/share", shareRouter);
 app.use("/api/categories", categoryRouter);
 app.use("/api/algorithms", algorithmRouter);
-app.use("/api/snapshots", snapshotRouter);
 
 app.use(notFoundHandler);
 app.use(errorHandler);

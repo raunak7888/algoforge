@@ -12,7 +12,6 @@ import authRouter from "./routes/auth";
 import shareRouter from "./routes/share";
 import categoryRouter from "./routes/category";
 import algorithmRouter from "./routes/algorithm";
-import snapshotRouter from "./routes/snapshot";
 
 const app = express();
 
@@ -39,7 +38,6 @@ app.use("/api/analyses", analysisRouter);
 app.use("/api/share", shareRouter);
 app.use("/api/categories", categoryRouter);
 app.use("/api/algorithms", algorithmRouter);
-app.use("/api/snapshots", snapshotRouter);
 
 app.use(notFoundHandler);
 app.use(errorHandler);
@@ -168,51 +166,61 @@ import { algorithmService } from "../services/algorithm.service";
 import { asyncHandler } from "../utils/async-handler";
 import { ensureString } from "../validation/common";
 import {
-  parseCreateAlgorithm,
-  parseUpdateAlgorithm,
-  parseAlgorithmQuery,
+    parseCreateAlgorithm,
+    parseUpdateAlgorithm,
+    parseAlgorithmQuery,
 } from "../validation/algorithm";
 
 class AlgorithmController {
-  list = asyncHandler(async (req: Request, res: Response) => {
-    const query = parseAlgorithmQuery(req.query);
-    const algorithms = await algorithmService.listAlgorithms(query);
-    res.json(algorithms);
-  });
+    list = asyncHandler(async (req: Request, res: Response) => {
+        const query = parseAlgorithmQuery(req.query);
+        const algorithms = await algorithmService.listAlgorithms(query);
+        res.json(algorithms);
+    });
 
-  getById = asyncHandler(async (req: Request, res: Response) => {
-    const id = ensureString(req.params.id, "Algorithm ID is required.");
-    const algorithm = await algorithmService.getAlgorithmById(id);
-    res.json(algorithm);
-  });
+    getById = asyncHandler(async (req: Request, res: Response) => {
+        const id = ensureString(req.params.id, "Algorithm ID is required.");
+        const algorithm = await algorithmService.getAlgorithmById(id);
+        res.json(algorithm);
+    });
 
-  getBySlug = asyncHandler(async (req: Request, res: Response) => {
-    const slug = ensureString(req.params.slug, "Algorithm slug is required.");
-    const algorithm = await algorithmService.getAlgorithmBySlug(slug);
-    res.json(algorithm);
-  });
+    getBySlug = asyncHandler(async (req: Request, res: Response) => {
+        const slug = ensureString(
+            req.params.slug,
+            "Algorithm slug is required.",
+        );
+        const algorithm = await algorithmService.getAlgorithmBySlug(slug);
+        res.json(algorithm);
+    });
 
-  create = asyncHandler(async (req: Request, res: Response) => {
-    const input = parseCreateAlgorithm(req.body);
-    const algorithm = await algorithmService.createAlgorithm(input);
-    res.status(201).json(algorithm);
-  });
+    getVisualize = asyncHandler(async (req: Request, res: Response) => {
+        const id = ensureString(req.params.id, "Algorithm ID is required.");
+        const execution = await algorithmService.getAlgorithmExecution(id);
+        res.json(execution);
+    });
 
-  update = asyncHandler(async (req: Request, res: Response) => {
-    const id = ensureString(req.params.id, "Algorithm ID is required.");
-    const input = parseUpdateAlgorithm(req.body);
-    const algorithm = await algorithmService.updateAlgorithm(id, input);
-    res.json(algorithm);
-  });
+    create = asyncHandler(async (req: Request, res: Response) => {
+        const input = parseCreateAlgorithm(req.body);
+        const createdAlgorithm = await algorithmService.createAlgorithm(input);
+        res.status(201).json(createdAlgorithm);
+    });
 
-  delete = asyncHandler(async (req: Request, res: Response) => {
-    const id = ensureString(req.params.id, "Algorithm ID is required.");
-    await algorithmService.deleteAlgorithm(id);
-    res.status(204).send();
-  });
+    update = asyncHandler(async (req: Request, res: Response) => {
+        const id = ensureString(req.params.id, "Algorithm ID is required.");
+        const input = parseUpdateAlgorithm(req.body);
+        const updatedAlgorithm = await algorithmService.updateAlgorithm(id, input);
+        res.status(200).json(updatedAlgorithm);
+    });
+
+    delete = asyncHandler(async (req: Request, res: Response) => {
+        const id = ensureString(req.params.id, "Algorithm ID is required.");
+        await algorithmService.deleteAlgorithm(id);
+        res.status(204).send();
+    });
 }
 
 export const algorithmController = new AlgorithmController();
+
 
 ------------------------------------------------
 FILE: ./apps/api/src/controllers/analysis.controller.ts
@@ -370,11 +378,13 @@ class AuthController {
     const accessToken = getToken(req);
     
     if (!accessToken) {
-      res.json({ user: null });
-      return;
+      throw AppError.unauthorized("Not authenticated");
     }
 
     const user = await userService.getUserByToken(accessToken);
+    if (!user) {
+      throw AppError.unauthorized("Not authenticated");
+    }
     res.json({ user });
   });
 }
@@ -427,48 +437,6 @@ class CategoryController {
 }
 
 export const categoryController = new CategoryController();
-
-------------------------------------------------
-FILE: ./apps/api/src/controllers/snapshot.controller.ts
-------------------------------------------------
-import { Request, Response } from "express";
-import { snapshotService } from "../services/snapshot.service";
-import { asyncHandler } from "../utils/async-handler";
-import { ensureString } from "../validation/common";
-import { parseCreateSnapshot } from "../validation/snapshot";
-
-class SnapshotController {
-  create = asyncHandler(async (req: Request, res: Response) => {
-    const input = parseCreateSnapshot(req.body);
-    const snapshot = await snapshotService.createSnapshot(input);
-    res.status(201).json(snapshot);
-  });
-
-  getById = asyncHandler(async (req: Request, res: Response) => {
-    const id = ensureString(req.params.id, "Snapshot ID is required.");
-    const snapshot = await snapshotService.getSnapshotById(id);
-    res.json(snapshot);
-  });
-
-  listByAlgorithm = asyncHandler(async (req: Request, res: Response) => {
-    const algorithmId = ensureString(
-      req.params.algorithmId,
-      "Algorithm ID is required."
-    );
-    const snapshots = await snapshotService.listSnapshotsByAlgorithm(
-      algorithmId
-    );
-    res.json(snapshots);
-  });
-
-  delete = asyncHandler(async (req: Request, res: Response) => {
-    const id = ensureString(req.params.id, "Snapshot ID is required.");
-    await snapshotService.deleteSnapshot(id);
-    res.status(204).send();
-  });
-}
-
-export const snapshotController = new SnapshotController();
 
 ------------------------------------------------
 FILE: ./apps/api/src/middleware/auth.ts
@@ -689,12 +657,18 @@ import { Role } from "@algoforge/db";
 import { algorithmController } from "../controllers/algorithm.controller";
 import { requireAuth, requireRoles } from "../middleware/auth";
 import { requireCsrf } from "../middleware/csrf";
+import { validateIdParam, validateSlugParam } from "../validation/algorithm";
 
 const router = Router();
 
 router.get("/", algorithmController.list);
-router.get("/:id", algorithmController.getById);
-router.get("/slug/:slug", algorithmController.getBySlug);
+
+// Unambiguous strong routes
+router.get("/slug/:slug", validateSlugParam, algorithmController.getBySlug);
+router.get("/id/:id", validateIdParam, algorithmController.getById);
+router.get("/id/:id/visualize", validateIdParam, algorithmController.getVisualize);
+
+
 router.post(
   "/",
   requireAuth,
@@ -703,19 +677,23 @@ router.post(
   algorithmController.create
 );
 router.patch(
-  "/:id",
+  "/id/:id",
   requireAuth,
   requireRoles(Role.ADMIN),
   requireCsrf,
+  validateIdParam,
   algorithmController.update
 );
+
 router.delete(
-  "/:id",
+  "/id/:id",
   requireAuth,
   requireRoles(Role.ADMIN),
   requireCsrf,
+  validateIdParam,
   algorithmController.delete
 );
+
 
 export default router;
 
@@ -751,8 +729,7 @@ const router = Router();
 router.get("/google/start", authController.startGoogleAuth);
 router.get("/google/callback", authController.handleGoogleCallback);
 router.get("/me", authController.getMe);
-router.get("/session", requireAuth, authController.getSession);
-router.post("/refresh", requireCsrf, authController.refreshSession);
+router.post("/refresh", authController.refreshSession);
 router.post("/logout", requireCsrf, authController.logout);
 router.post("/logout-all", requireAuth, requireCsrf, authController.logoutAll);
 router.get("/admin/users", requireAuth, requireRoles(Role.ADMIN), authController.listUsers);
@@ -806,23 +783,6 @@ import { analysisController } from "../controllers/analysis.controller";
 const router = Router();
 
 router.get("/:shareId", analysisController.getPublicAnalysis);
-
-export default router;
-
-------------------------------------------------
-FILE: ./apps/api/src/routes/snapshot.ts
-------------------------------------------------
-import { Router } from "express";
-import { snapshotController } from "../controllers/snapshot.controller";
-import { requireAuth } from "../middleware/auth";
-import { requireCsrf } from "../middleware/csrf";
-
-const router = Router();
-
-router.post("/", requireAuth, requireCsrf, snapshotController.create);
-router.get("/:id", snapshotController.getById);
-router.get("/algorithm/:algorithmId", snapshotController.listByAlgorithm);
-router.delete("/:id", requireAuth, requireCsrf, snapshotController.delete);
 
 export default router;
 
@@ -971,12 +931,19 @@ export const aiService = new AIService(createGeminiProvider());
 ------------------------------------------------
 FILE: ./apps/api/src/services/algorithm.service.ts
 ------------------------------------------------
-import { prisma } from "@algoforge/db";
+import { prisma, Prisma } from "@algoforge/db";
 import {
-  AlgorithmResponseSchema,
+  AlgorithmListItemSchema,
+  AlgorithmDetailSchema,
+  AlgorithmExecutionSchema,
+  ForgeCodeSchema,
+  GuardRangesSchema,
+  InputSchema,
   type CreateAlgorithm,
   type UpdateAlgorithm,
-  type AlgorithmResponse,
+  type AlgorithmListItem,
+  type AlgorithmDetail,
+  type AlgorithmExecution,
 } from "@algoforge/forge";
 import { AppError } from "../utils/app-error";
 
@@ -987,44 +954,8 @@ export type AlgorithmQuery = {
   search?: string;
 };
 
-function serializeAlgorithm(algorithm: {
-  id: string;
-  slug: string;
-  name: string;
-  description: string;
-  categoryId: string;
-  forgeCode: unknown;
-  inputSchema: unknown;
-  guardRanges: unknown;
-  timeComplexity: string | null;
-  spaceComplexity: string | null;
-  difficulty: string;
-  tags: string[];
-  isPublished: boolean;
-  createdAt: Date;
-  updatedAt: Date;
-}): AlgorithmResponse {
-  return AlgorithmResponseSchema.parse({
-    id: algorithm.id,
-    slug: algorithm.slug,
-    name: algorithm.name,
-    description: algorithm.description,
-    categoryId: algorithm.categoryId,
-    forgeCode: algorithm.forgeCode,
-    inputSchema: algorithm.inputSchema,
-    guardRanges: algorithm.guardRanges,
-    timeComplexity: algorithm.timeComplexity,
-    spaceComplexity: algorithm.spaceComplexity,
-    difficulty: algorithm.difficulty,
-    tags: algorithm.tags,
-    isPublished: algorithm.isPublished,
-    createdAt: algorithm.createdAt.toISOString(),
-    updatedAt: algorithm.updatedAt.toISOString(),
-  });
-}
-
 class AlgorithmService {
-  async listAlgorithms(query: AlgorithmQuery): Promise<AlgorithmResponse[]> {
+  async listAlgorithms(query: AlgorithmQuery): Promise<AlgorithmListItem[]> {
     const where: any = {};
 
     if (query.categoryId) {
@@ -1043,43 +974,169 @@ class AlgorithmService {
       where.OR = [
         { name: { contains: query.search, mode: "insensitive" } },
         { description: { contains: query.search, mode: "insensitive" } },
-        { tags: { has: query.search } },
+        { tags: { some: { tag: { label: { contains: query.search, mode: "insensitive" } } } } },
       ];
     }
 
     const algorithms = await prisma.algorithm.findMany({
       where,
+      select: {
+        id: true,
+        slug: true,
+        name: true,
+        categoryId: true,
+        difficulty: true,
+        complexity: {
+          select: {
+            timeBest: true,
+            timeAverage: true,
+            timeWorst: true,
+            space: true,
+          }
+        }
+      },
       orderBy: { createdAt: "desc" },
     });
 
-    return algorithms.map(serializeAlgorithm);
+    return algorithms.map((alg) => AlgorithmListItemSchema.parse(alg));
   }
 
-  async getAlgorithmById(id: string): Promise<AlgorithmResponse> {
+  async getAlgorithmById(id: string): Promise<AlgorithmDetail> {
     const algorithm = await prisma.algorithm.findUnique({
       where: { id },
+      select: {
+        id: true,
+        slug: true,
+        name: true,
+        description: true,
+        difficulty: true,
+        complexity: {
+          select: {
+            timeBest: true,
+            timeAverage: true,
+            timeWorst: true,
+            space: true,
+          }
+        },
+        displayCode: {
+          select: {
+            language: true,
+            code: true,
+          }
+        },
+        tags: {
+          select: {
+            tag: {
+              select: {
+                id: true,
+                label: true,
+              }
+            }
+          }
+        }
+      }
     });
 
     if (!algorithm) {
       throw AppError.notFound("Algorithm not found.");
     }
 
-    return serializeAlgorithm(algorithm);
+    return AlgorithmDetailSchema.parse({
+      ...algorithm,
+      tags: algorithm.tags.map(t => t.tag)
+    });
   }
 
-  async getAlgorithmBySlug(slug: string): Promise<AlgorithmResponse> {
+  async getAlgorithmBySlug(slug: string): Promise<AlgorithmDetail> {
     const algorithm = await prisma.algorithm.findUnique({
       where: { slug },
+      select: {
+        id: true,
+        slug: true,
+        name: true,
+        description: true,
+        difficulty: true,
+        complexity: {
+          select: {
+            timeBest: true,
+            timeAverage: true,
+            timeWorst: true,
+            space: true,
+          }
+        },
+        displayCode: {
+          select: {
+            language: true,
+            code: true,
+          }
+        },
+        tags: {
+          select: {
+            tag: {
+              select: {
+                id: true,
+                label: true,
+              }
+            }
+          }
+        }
+      }
     });
 
     if (!algorithm) {
       throw AppError.notFound("Algorithm not found.");
     }
 
-    return serializeAlgorithm(algorithm);
+    return AlgorithmDetailSchema.parse({
+      ...algorithm,
+      tags: algorithm.tags.map(t => t.tag)
+    });
   }
 
-  async createAlgorithm(input: CreateAlgorithm): Promise<AlgorithmResponse> {
+  async getAlgorithmExecution(id: string): Promise<AlgorithmExecution> {
+    const algorithm = await prisma.algorithm.findUnique({
+      where: { id },
+      include: {
+        forge: true
+      }
+    });
+
+    if (!algorithm) {
+      throw AppError.notFound("Algorithm not found.");
+    }
+
+    if (!algorithm.forge) {
+      if (algorithm.isPublished) {
+        console.error(`[Data Integrity Error] Published algorithm ${algorithm.id} is missing forge data.`);
+      }
+      return AlgorithmExecutionSchema.parse({
+        status: "INCOMPLETE_ALGORITHM",
+        message: "Algorithm has no visualization data"
+      });
+    }
+
+    try {
+      ForgeCodeSchema.parse(algorithm.forge.forgeCode);
+      GuardRangesSchema.parse(algorithm.forge.guardRanges);
+      InputSchema.parse(algorithm.forge.inputSchema);
+    } catch (error) {
+      console.error(`[Data Integrity Error] Corrupted forge data for algorithm ${algorithm.id}:`, error instanceof Error ? error.message : "Unknown error");
+      throw AppError.internal("Invalid forge configuration stored in database");
+    }
+
+    return AlgorithmExecutionSchema.parse({
+      algorithmId: algorithm.id,
+      name: algorithm.name,
+      forge: {
+        forgeCode: algorithm.forge.forgeCode,
+        inputSchema: algorithm.forge.inputSchema,
+        guardRanges: algorithm.forge.guardRanges,
+        version: algorithm.forge.version
+      }
+    });
+  }
+
+  async createAlgorithm(input: CreateAlgorithm): Promise<AlgorithmDetail> {
     const existing = await prisma.algorithm.findUnique({
       where: { slug: input.slug },
     });
@@ -1088,23 +1145,234 @@ class AlgorithmService {
       throw AppError.badRequest("Algorithm with this slug already exists.");
     }
 
-    const algorithm = await prisma.algorithm.create({
-      data: input as any,
+    // Explicitly validate forge configurations
+    try {
+      ForgeCodeSchema.parse(input.forge.forgeCode);
+      GuardRangesSchema.parse(input.forge.guardRanges);
+    } catch (error: unknown) {
+      throw AppError.badRequest(
+        "Invalid forge configuration: " + (error instanceof Error ? error.message : "Unknown error")
+      );
+    }
+
+    const createdAlgorithm = await prisma.$transaction(async (tx) => {
+      return tx.algorithm.create({
+        data: {
+          slug: input.slug,
+          name: input.name,
+          description: input.description,
+          categoryId: input.categoryId,
+          difficulty: input.difficulty,
+          isPublished: input.isPublished ?? false,
+          complexity: {
+            create: {
+              timeBest: input.complexity.time.best,
+              timeAverage: input.complexity.time.average,
+              timeWorst: input.complexity.time.worst,
+              space: input.complexity.space,
+            },
+          },
+          displayCode: {
+            create: {
+              language: input.displayCode.language,
+              code: input.displayCode.code,
+            },
+          },
+          forge: {
+            create: {
+              forgeCode: input.forge.forgeCode as unknown as Prisma.InputJsonValue,
+              inputSchema: input.forge.inputSchema as unknown as Prisma.InputJsonValue,
+              guardRanges: input.forge.guardRanges as unknown as Prisma.InputJsonValue,
+            },
+          },
+          tags: {
+            create: input.tags.map((tagLabel) => ({
+              tag: {
+                connectOrCreate: {
+                  where: { label: tagLabel },
+                  create: { label: tagLabel },
+                },
+              },
+            })),
+          },
+        },
+        include: {
+          complexity: true,
+          displayCode: true,
+          forge: true,
+          tags: {
+            include: {
+              tag: true,
+            },
+          },
+        },
+      });
     });
 
-    return serializeAlgorithm(algorithm);
+    return AlgorithmDetailSchema.parse({
+      id: createdAlgorithm.id,
+      slug: createdAlgorithm.slug,
+      name: createdAlgorithm.name,
+      description: createdAlgorithm.description,
+      difficulty: createdAlgorithm.difficulty,
+      complexity: {
+        timeBest: createdAlgorithm.complexity?.timeBest ?? null,
+        timeAverage: createdAlgorithm.complexity?.timeAverage ?? null,
+        timeWorst: createdAlgorithm.complexity?.timeWorst ?? null,
+        space: createdAlgorithm.complexity?.space ?? null,
+      },
+      displayCode: createdAlgorithm.displayCode
+        ? {
+            language: createdAlgorithm.displayCode.language,
+            code: createdAlgorithm.displayCode.code,
+          }
+        : null,
+      tags: createdAlgorithm.tags.map((t) => t.tag),
+    });
   }
 
-  async updateAlgorithm(
-    id: string,
-    input: UpdateAlgorithm
-  ): Promise<AlgorithmResponse> {
-    const algorithm = await prisma.algorithm.update({
+  async updateAlgorithm(id: string, input: UpdateAlgorithm): Promise<AlgorithmDetail> {
+    const existing = await prisma.algorithm.findUnique({
       where: { id },
-      data: input as any,
+      include: {
+        complexity: true,
+        displayCode: true,
+        forge: true,
+        tags: true,
+      }
     });
 
-    return serializeAlgorithm(algorithm);
+    if (!existing) {
+      throw AppError.notFound("Algorithm not found.");
+    }
+
+    if (input.forge) {
+      try {
+        if (input.forge.forgeCode) ForgeCodeSchema.parse(input.forge.forgeCode);
+        if (input.forge.guardRanges) GuardRangesSchema.parse(input.forge.guardRanges);
+        if (input.forge.inputSchema) InputSchema.parse(input.forge.inputSchema);
+      } catch (error: unknown) {
+        throw AppError.badRequest(
+          "Invalid forge configuration: " + (error instanceof Error ? error.message : "Unknown error")
+        );
+      }
+    }
+
+    const updatedAlgorithm = await prisma.$transaction(async (tx) => {
+      const data: Prisma.AlgorithmUpdateInput = {};
+
+      if (input.slug !== undefined) data.slug = input.slug;
+      if (input.name !== undefined) data.name = input.name;
+      if (input.description !== undefined) data.description = input.description;
+      if (input.categoryId !== undefined) data.category = { connect: { id: input.categoryId } };
+      if (input.difficulty !== undefined) data.difficulty = input.difficulty;
+      if (input.isPublished !== undefined) data.isPublished = input.isPublished;
+
+      if (input.complexity) {
+        data.complexity = {
+          upsert: {
+            create: {
+              timeBest: input.complexity.time?.best ?? existing.complexity?.timeBest ?? null,
+              timeAverage: input.complexity.time?.average ?? existing.complexity?.timeAverage ?? null,
+              timeWorst: input.complexity.time?.worst ?? existing.complexity?.timeWorst ?? null,
+              space: input.complexity.space ?? existing.complexity?.space ?? null,
+            },
+            update: {
+              timeBest: input.complexity.time?.best,
+              timeAverage: input.complexity.time?.average,
+              timeWorst: input.complexity.time?.worst,
+              space: input.complexity.space,
+            }
+          }
+        };
+      }
+
+      if (input.displayCode) {
+        data.displayCode = {
+          upsert: {
+            create: {
+              language: input.displayCode.language ?? existing.displayCode?.language ?? "js",
+              code: input.displayCode.code ?? existing.displayCode?.code ?? "",
+            },
+            update: {
+              language: input.displayCode.language,
+              code: input.displayCode.code,
+            }
+          }
+        };
+      }
+
+      if (input.forge) {
+        data.forge = {
+          upsert: {
+            create: {
+              forgeCode: (input.forge.forgeCode ?? existing.forge?.forgeCode ?? {}) as unknown as Prisma.InputJsonValue,
+              inputSchema: (input.forge.inputSchema ?? existing.forge?.inputSchema ?? {}) as unknown as Prisma.InputJsonValue,
+              guardRanges: (input.forge.guardRanges ?? existing.forge?.guardRanges ?? {}) as unknown as Prisma.InputJsonValue,
+            },
+            update: {
+              ...(input.forge.forgeCode ? { forgeCode: input.forge.forgeCode as unknown as Prisma.InputJsonValue } : {}),
+              ...(input.forge.inputSchema ? { inputSchema: input.forge.inputSchema as unknown as Prisma.InputJsonValue } : {}),
+              ...(input.forge.guardRanges ? { guardRanges: input.forge.guardRanges as unknown as Prisma.InputJsonValue } : {}),
+            }
+          }
+        };
+      }
+
+      if (input.tags) {
+        data.tags = {
+          deleteMany: {},
+          create: input.tags.map((tagLabel) => ({
+            tag: {
+              connectOrCreate: {
+                where: { label: tagLabel },
+                create: { label: tagLabel },
+              },
+            },
+          })),
+        };
+      }
+
+      return tx.algorithm.update({
+        where: { id },
+        data,
+        include: {
+          complexity: true,
+          displayCode: true,
+          forge: true,
+          tags: {
+            include: { tag: true }
+          }
+        }
+      });
+    });
+
+    return AlgorithmDetailSchema.parse({
+      id: updatedAlgorithm.id,
+      slug: updatedAlgorithm.slug,
+      name: updatedAlgorithm.name,
+      description: updatedAlgorithm.description,
+      difficulty: updatedAlgorithm.difficulty,
+      complexity: {
+        timeBest: updatedAlgorithm.complexity?.timeBest ?? null,
+        timeAverage: updatedAlgorithm.complexity?.timeAverage ?? null,
+        timeWorst: updatedAlgorithm.complexity?.timeWorst ?? null,
+        space: updatedAlgorithm.complexity?.space ?? null,
+      },
+      displayCode: updatedAlgorithm.displayCode
+        ? {
+            language: updatedAlgorithm.displayCode.language,
+            code: updatedAlgorithm.displayCode.code,
+          }
+        : null,
+      tags: updatedAlgorithm.tags.map((t) => t.tag),
+      forge: updatedAlgorithm.forge ? {
+        forgeCode: updatedAlgorithm.forge.forgeCode,
+        inputSchema: updatedAlgorithm.forge.inputSchema,
+        guardRanges: updatedAlgorithm.forge.guardRanges,
+        version: updatedAlgorithm.forge.version,
+      } : null,
+    });
   }
 
   async deleteAlgorithm(id: string): Promise<void> {
@@ -1176,9 +1444,8 @@ class AnalysisService {
         userId,
         code: input.code,
         language: input.language,
-        complexity: analysisResult.complexity.time.worst,
+        complexity: analysisResult.complexity as any,
         suggestion: analysisResult.improvements[0]?.suggestion ?? null,
-        timeEstimate: analysisResult.complexity.time.average,
         result: analysisResult,
       },
       select: {
@@ -1275,7 +1542,7 @@ class AnalysisService {
       throw AppError.notFound("Analysis not found.");
     }
 
-    const record = analysis as any;
+    const record = analysis;
     if (record.shareId && record.isPublic) {
       return { shareUrl: `${env.webAppUrl}/share/${record.shareId}` };
     }
@@ -1283,7 +1550,7 @@ class AnalysisService {
     const { nanoid } = await import("nanoid");
     const shareId = nanoid(10);
 
-    await (prisma.analysis.update as any)({
+    await prisma.analysis.update({
       where: { id: analysisId },
       data: {
         shareId,
@@ -1295,8 +1562,8 @@ class AnalysisService {
   }
 
   async getPublicAnalysis(shareId: string) {
-    const analysis = await (prisma.analysis.findUnique as any)({
-      where: { shareId } as any,
+    const analysis = await prisma.analysis.findUnique({
+      where: { shareId, isPublic: true },
       select: {
         id: true,
         code: true,
@@ -1316,11 +1583,7 @@ class AnalysisService {
     });
 
     if (!analysis) {
-      throw AppError.notFound("Analysis not found.");
-    }
-
-    if (!(analysis as any).isPublic) {
-      throw AppError.forbidden("This analysis is not public.");
+      throw AppError.notFound("Analysis not found or not public.");
     }
 
     return SharedAnalysisSchema.parse({
@@ -1735,89 +1998,95 @@ FILE: ./apps/api/src/services/category.service.ts
 ------------------------------------------------
 import { prisma } from "@algoforge/db";
 import {
-  CategoryResponseSchema,
-  type CreateCategory,
-  type UpdateCategory,
-  type CategoryResponse,
+    CategoryResponseSchema,
+    type CreateCategory,
+    type UpdateCategory,
+    type CategoryResponse,
 } from "@algoforge/forge";
 import { AppError } from "../utils/app-error";
+import { randomUUID } from "crypto";
 
 function serializeCategory(category: {
-  id: string;
-  label: string;
-  description: string | null;
-  iconName: string | null;
-  sortOrder: number;
-  createdAt: Date;
-  updatedAt: Date;
+    id: string;
+    label: string;
+    description: string | null;
+    iconName: string | null;
+    sortOrder: number;
+    createdAt: Date;
+    updatedAt: Date;
 }): CategoryResponse {
-  return CategoryResponseSchema.parse({
-    id: category.id,
-    label: category.label,
-    description: category.description,
-    iconName: category.iconName,
-    sortOrder: category.sortOrder,
-    createdAt: category.createdAt.toISOString(),
-    updatedAt: category.updatedAt.toISOString(),
-  });
+    return CategoryResponseSchema.parse({
+        id: category.id,
+        label: category.label,
+        description: category.description,
+        iconName: category.iconName,
+        sortOrder: category.sortOrder,
+        createdAt: category.createdAt.toISOString(),
+        updatedAt: category.updatedAt.toISOString(),
+    });
 }
 
 class CategoryService {
-  async listCategories(): Promise<CategoryResponse[]> {
-    const categories = await prisma.category.findMany({
-      orderBy: { sortOrder: "asc" },
-    });
-    return categories.map(serializeCategory);
-  }
-
-  async getCategoryById(id: string): Promise<CategoryResponse> {
-    const category = await prisma.category.findUnique({
-      where: { id },
-    });
-
-    if (!category) {
-      throw AppError.notFound("Category not found.");
+    async listCategories(): Promise<CategoryResponse[]> {
+        const categories = await prisma.category.findMany({
+            orderBy: { sortOrder: "asc" },
+        });
+        return categories.map(serializeCategory);
     }
 
-    return serializeCategory(category);
-  }
+    async getCategoryById(id: string): Promise<CategoryResponse> {
+        const category = await prisma.category.findUnique({
+            where: { id },
+        });
 
-  async createCategory(input: CreateCategory): Promise<CategoryResponse> {
-    const category = await prisma.category.create({
-      data: input,
-    });
-    return serializeCategory(category);
-  }
+        if (!category) {
+            throw AppError.notFound("Category not found.");
+        }
 
-  async updateCategory(
-    id: string,
-    input: UpdateCategory
-  ): Promise<CategoryResponse> {
-    const category = await prisma.category.update({
-      where: { id },
-      data: input,
-    });
-    return serializeCategory(category);
-  }
-
-  async deleteCategory(id: string): Promise<void> {
-    const count = await prisma.algorithm.count({
-      where: { categoryId: id },
-    });
-
-    if (count > 0) {
-      throw AppError.badRequest(
-        "Cannot delete category with associated algorithms."
-      );
+        return serializeCategory(category);
     }
 
-    await prisma.category.delete({
-      where: { id },
-    });
-  }
+    async createCategory(input: CreateCategory): Promise<CategoryResponse> {
+        const category = await prisma.category.create({
+            data: {
+                ...input,
+                id: input.id ?? randomUUID(), // ✅ generate if missing
+            },
+        });
+
+        return serializeCategory(category);
+    }
+
+    async updateCategory(
+        id: string,
+        input: UpdateCategory,
+    ): Promise<CategoryResponse> {
+        const category = await prisma.category.update({
+            where: { id },
+            data: input,
+        });
+        return serializeCategory(category);
+    }
+
+    async deleteCategory(id: string): Promise<void> {
+        const count = await prisma.algorithm.count({
+            where: { categoryId: id },
+        });
+
+        if (count > 0) {
+            throw AppError.badRequest(
+                "Cannot delete category with associated algorithms.",
+            );
+        }
+
+        await prisma.category.delete({
+            where: { id },
+        });
+    }
 }
 
 export const categoryService = new CategoryService();
+
 
 ------------------------------------------------
 FILE: ./apps/api/src/services/providers/ai-provider.ts
@@ -2160,114 +2429,6 @@ function getStatusCode(error: unknown): number | undefined {
   }
   return undefined;
 } 
-
-------------------------------------------------
-FILE: ./apps/api/src/services/snapshot.service.ts
-------------------------------------------------
-import { prisma } from "@algoforge/db";
-import {
-    SnapshotResponseSchema,
-    type CreateSnapshot,
-    type SnapshotResponse,
-    ForgeRecorder,
-} from "@algoforge/forge";
-import { AppError } from "../utils/app-error";
-import { algorithmService } from "./algorithm.service";
-
-function serializeSnapshot(snapshot: {
-    id: string;
-    algorithmId: string;
-    input: unknown;
-    steps: unknown;
-    executionTimeMs: number;
-    createdAt: Date;
-}): SnapshotResponse {
-    return SnapshotResponseSchema.parse({
-        id: snapshot.id,
-        algorithmId: snapshot.algorithmId,
-        input: snapshot.input,
-        steps: snapshot.steps,
-        executionTimeMs: snapshot.executionTimeMs,
-        createdAt: snapshot.createdAt.toISOString(),
-    });
-}
-
-class SnapshotService {
-    async createSnapshot(input: CreateSnapshot): Promise<SnapshotResponse> {
-        const algorithm = await algorithmService.getAlgorithmById(
-            input.algorithmId,
-        );
-
-        const startTime = Date.now();
-        const steps = await this.executeForgeCode(
-            algorithm.forgeCode.body,
-            input.input,
-        );
-        const executionTimeMs = Date.now() - startTime;
-
-        const snapshot = await prisma.snapshot.create({
-            data: {
-                algorithmId: input.algorithmId,
-                input: input.input as any,
-                steps: steps as any,
-                executionTimeMs,
-            },
-        });
-
-        return serializeSnapshot(snapshot);
-    }
-
-    async getSnapshotById(id: string): Promise<SnapshotResponse> {
-        const snapshot = await prisma.snapshot.findUnique({
-            where: { id },
-        });
-
-        if (!snapshot) {
-            throw AppError.notFound("Snapshot not found.");
-        }
-
-        return serializeSnapshot(snapshot);
-    }
-
-    async listSnapshotsByAlgorithm(
-        algorithmId: string,
-    ): Promise<SnapshotResponse[]> {
-        const snapshots = await prisma.snapshot.findMany({
-            where: { algorithmId },
-            orderBy: { createdAt: "desc" },
-            take: 50,
-        });
-
-        return snapshots.map(serializeSnapshot);
-    }
-
-    async deleteSnapshot(id: string): Promise<void> {
-        await prisma.snapshot.delete({
-            where: { id },
-        });
-    }
-
-    private async executeForgeCode(
-        code: string,
-        input: Record<string, unknown>,
-    ): Promise<unknown[]> {
-        const forge = new ForgeRecorder();
-        const context = { forge, input };
-
-        try {
-            const fn = new Function("forge", "input", code);
-            fn(context.forge, context.input);
-            return forge.getSteps();
-        } catch (error) {
-            throw AppError.badRequest(
-                `ForgeCode execution failed: ${error instanceof Error ? error.message : "Unknown error"}`,
-            );
-        }
-    }
-}
-
-export const snapshotService = new SnapshotService();
-
 
 ------------------------------------------------
 FILE: ./apps/api/src/services/user.service.ts
@@ -2656,60 +2817,84 @@ export function verifyRefreshToken(token: string): RefreshTokenPayload {
 ------------------------------------------------
 FILE: ./apps/api/src/validation/algorithm.ts
 ------------------------------------------------
+import { Request, Response, NextFunction } from "express";
 import {
-  CreateAlgorithmSchema,
-  UpdateAlgorithmSchema,
-  type CreateAlgorithm,
-  type UpdateAlgorithm,
+    CreateAlgorithmSchema,
+    UpdateAlgorithmSchema,
+    type CreateAlgorithm,
+    type UpdateAlgorithm,
 } from "@algoforge/forge";
 import { AppError } from "../utils/app-error";
 import type { AlgorithmQuery } from "../services/algorithm.service";
 
 export function parseCreateAlgorithm(value: unknown): CreateAlgorithm {
-  const result = CreateAlgorithmSchema.safeParse(value);
+    const result = CreateAlgorithmSchema.safeParse(value);
+    if (!result.success) {
+        throw AppError.badRequest(
+            result.error.issues[0]?.message ?? "Invalid algorithm data.",
+        );
+    }
 
-  if (!result.success) {
-    throw AppError.badRequest(
-      result.error.issues[0]?.message ?? "Invalid algorithm data."
-    );
-  }
-
-  return result.data;
+    return result.data;
 }
 
 export function parseUpdateAlgorithm(value: unknown): UpdateAlgorithm {
-  const result = UpdateAlgorithmSchema.safeParse(value);
+    const result = UpdateAlgorithmSchema.safeParse(value);
 
-  if (!result.success) {
-    throw AppError.badRequest(
-      result.error.issues[0]?.message ?? "Invalid algorithm data."
-    );
-  }
+    if (!result.success) {
+        throw AppError.badRequest(
+            result.error.issues[0]?.message ?? "Invalid algorithm data.",
+        );
+    }
 
-  return result.data;
+    return result.data;
 }
 
 export function parseAlgorithmQuery(value: unknown): AlgorithmQuery {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return {};
-  }
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+        return {};
+    }
 
-  const query = value as Record<string, unknown>;
+    const query = value as Record<string, unknown>;
 
-  return {
-    categoryId:
-      typeof query.categoryId === "string" ? query.categoryId : undefined,
-    difficulty:
-      typeof query.difficulty === "string" ? query.difficulty : undefined,
-    isPublished:
-      query.isPublished === "true"
-        ? true
-        : query.isPublished === "false"
-          ? false
-          : undefined,
-    search: typeof query.search === "string" ? query.search : undefined,
-  };
+    return {
+        categoryId:
+            typeof query.categoryId === "string" ? query.categoryId : undefined,
+        difficulty:
+            typeof query.difficulty === "string" ? query.difficulty : undefined,
+        isPublished:
+            query.isPublished === "true"
+                ? true
+                : query.isPublished === "false"
+                  ? false
+                  : undefined,
+        search: typeof query.search === "string" ? query.search : undefined,
+    };
 }
+
+export function validateIdParam(req: Request, res: Response, next: NextFunction) {
+    const id = req.params.id;
+    // UUID format or cuid format (both typically alphanumeric with hyphens)
+    const uuidRegex = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+    const cuidRegex = /^c[a-z0-9]{24}$/;
+    
+    if (!id || (!uuidRegex.test(id) && !cuidRegex.test(id))) {
+        return next(AppError.badRequest("Invalid algorithm ID format. Expected UUID or cuid."));
+    }
+    next();
+}
+
+export function validateSlugParam(req: Request, res: Response, next: NextFunction) {
+    const slug = req.params.slug;
+    // Kebab case string
+    const slugRegex = /^[a-z0-9-]+$/;
+    
+    if (!slug || !slugRegex.test(slug)) {
+        return next(AppError.badRequest("Invalid slug format. Expected kebab-case string."));
+    }
+    next();
+}
+
 
 ------------------------------------------------
 FILE: ./apps/api/src/validation/analysis.ts
@@ -2818,36 +3003,36 @@ export function decodeAnalysisCursor(cursor: string): AnalysisCursor {
 FILE: ./apps/api/src/validation/category.ts
 ------------------------------------------------
 import {
-  CreateCategorySchema,
-  UpdateCategorySchema,
-  type CreateCategory,
-  type UpdateCategory,
+    CreateCategorySchema,
+    UpdateCategorySchema,
+    type CreateCategory,
+    type UpdateCategory,
 } from "@algoforge/forge";
 import { AppError } from "../utils/app-error";
 
 export function parseCreateCategory(value: unknown): CreateCategory {
-  const result = CreateCategorySchema.safeParse(value);
+    const result = CreateCategorySchema.safeParse(value);
+    if (!result.success) {
+        throw AppError.badRequest(
+            result.error.issues[0]?.message ?? "Invalid category data.",
+        );
+    }
 
-  if (!result.success) {
-    throw AppError.badRequest(
-      result.error.issues[0]?.message ?? "Invalid category data."
-    );
-  }
-
-  return result.data;
+    return result.data;
 }
 
 export function parseUpdateCategory(value: unknown): UpdateCategory {
-  const result = UpdateCategorySchema.safeParse(value);
+    const result = UpdateCategorySchema.safeParse(value);
 
-  if (!result.success) {
-    throw AppError.badRequest(
-      result.error.issues[0]?.message ?? "Invalid category data."
-    );
-  }
+    if (!result.success) {
+        throw AppError.badRequest(
+            result.error.issues[0]?.message ?? "Invalid category data.",
+        );
+    }
 
-  return result.data;
+    return result.data;
 }
+
 
 ------------------------------------------------
 FILE: ./apps/api/src/validation/common.ts
@@ -2864,25 +3049,322 @@ export function ensureString(value: unknown, message: string): string {
 
 
 ------------------------------------------------
-FILE: ./apps/api/src/validation/snapshot.ts
+FILE: ./apps/web/.next/dev/types/cache-life.d.ts
 ------------------------------------------------
-import {
-  CreateSnapshotSchema,
-  type CreateSnapshot,
-} from "@algoforge/forge";
-import { AppError } from "../utils/app-error";
+// Type definitions for Next.js cacheLife configs
 
-export function parseCreateSnapshot(value: unknown): CreateSnapshot {
-  const result = CreateSnapshotSchema.safeParse(value);
+declare module 'next/cache' {
+  export { unstable_cache } from 'next/dist/server/web/spec-extension/unstable-cache'
+  export {
+    updateTag,
+    revalidateTag,
+    revalidatePath,
+    refresh,
+  } from 'next/dist/server/web/spec-extension/revalidate'
+  export { unstable_noStore } from 'next/dist/server/web/spec-extension/unstable-no-store'
 
-  if (!result.success) {
-    throw AppError.badRequest(
-      result.error.issues[0]?.message ?? "Invalid snapshot data."
-    );
+  
+    /**
+     * Cache this `"use cache"` for a timespan defined by the `"default"` profile.
+     * ```
+     *   stale:      300 seconds (5 minutes)
+     *   revalidate: 900 seconds (15 minutes)
+     *   expire:     never
+     * ```
+     * 
+     * This cache may be stale on clients for 5 minutes before checking with the server.
+     * If the server receives a new request after 15 minutes, start revalidating new values in the background.
+     * It lives for the maximum age of the server cache. If this entry has no traffic for a while, it may serve an old value the next request.
+     */
+    export function cacheLife(profile: "default"): void
+    
+    /**
+     * Cache this `"use cache"` for a timespan defined by the `"seconds"` profile.
+     * ```
+     *   stale:      30 seconds
+     *   revalidate: 1 seconds
+     *   expire:     60 seconds (1 minute)
+     * ```
+     * 
+     * This cache may be stale on clients for 30 seconds before checking with the server.
+     * If the server receives a new request after 1 seconds, start revalidating new values in the background.
+     * If this entry has no traffic for 1 minute it will expire. The next request will recompute it.
+     */
+    export function cacheLife(profile: "seconds"): void
+    
+    /**
+     * Cache this `"use cache"` for a timespan defined by the `"minutes"` profile.
+     * ```
+     *   stale:      300 seconds (5 minutes)
+     *   revalidate: 60 seconds (1 minute)
+     *   expire:     3600 seconds (1 hour)
+     * ```
+     * 
+     * This cache may be stale on clients for 5 minutes before checking with the server.
+     * If the server receives a new request after 1 minute, start revalidating new values in the background.
+     * If this entry has no traffic for 1 hour it will expire. The next request will recompute it.
+     */
+    export function cacheLife(profile: "minutes"): void
+    
+    /**
+     * Cache this `"use cache"` for a timespan defined by the `"hours"` profile.
+     * ```
+     *   stale:      300 seconds (5 minutes)
+     *   revalidate: 3600 seconds (1 hour)
+     *   expire:     86400 seconds (1 day)
+     * ```
+     * 
+     * This cache may be stale on clients for 5 minutes before checking with the server.
+     * If the server receives a new request after 1 hour, start revalidating new values in the background.
+     * If this entry has no traffic for 1 day it will expire. The next request will recompute it.
+     */
+    export function cacheLife(profile: "hours"): void
+    
+    /**
+     * Cache this `"use cache"` for a timespan defined by the `"days"` profile.
+     * ```
+     *   stale:      300 seconds (5 minutes)
+     *   revalidate: 86400 seconds (1 day)
+     *   expire:     604800 seconds (1 week)
+     * ```
+     * 
+     * This cache may be stale on clients for 5 minutes before checking with the server.
+     * If the server receives a new request after 1 day, start revalidating new values in the background.
+     * If this entry has no traffic for 1 week it will expire. The next request will recompute it.
+     */
+    export function cacheLife(profile: "days"): void
+    
+    /**
+     * Cache this `"use cache"` for a timespan defined by the `"weeks"` profile.
+     * ```
+     *   stale:      300 seconds (5 minutes)
+     *   revalidate: 604800 seconds (1 week)
+     *   expire:     2592000 seconds (1 month)
+     * ```
+     * 
+     * This cache may be stale on clients for 5 minutes before checking with the server.
+     * If the server receives a new request after 1 week, start revalidating new values in the background.
+     * If this entry has no traffic for 1 month it will expire. The next request will recompute it.
+     */
+    export function cacheLife(profile: "weeks"): void
+    
+    /**
+     * Cache this `"use cache"` for a timespan defined by the `"max"` profile.
+     * ```
+     *   stale:      300 seconds (5 minutes)
+     *   revalidate: 2592000 seconds (1 month)
+     *   expire:     31536000 seconds (365 days)
+     * ```
+     * 
+     * This cache may be stale on clients for 5 minutes before checking with the server.
+     * If the server receives a new request after 1 month, start revalidating new values in the background.
+     * If this entry has no traffic for 365 days it will expire. The next request will recompute it.
+     */
+    export function cacheLife(profile: "max"): void
+    
+    /**
+     * Cache this `"use cache"` using a custom timespan.
+     * ```
+     *   stale: ... // seconds
+     *   revalidate: ... // seconds
+     *   expire: ... // seconds
+     * ```
+     *
+     * This is similar to Cache-Control: max-age=`stale`,s-max-age=`revalidate`,stale-while-revalidate=`expire-revalidate`
+     *
+     * If a value is left out, the lowest of other cacheLife() calls or the default, is used instead.
+     */
+    export function cacheLife(profile: {
+      /**
+       * This cache may be stale on clients for ... seconds before checking with the server.
+       */
+      stale?: number,
+      /**
+       * If the server receives a new request after ... seconds, start revalidating new values in the background.
+       */
+      revalidate?: number,
+      /**
+       * If this entry has no traffic for ... seconds it will expire. The next request will recompute it.
+       */
+      expire?: number
+    }): void
+  
+
+  import { cacheTag } from 'next/dist/server/use-cache/cache-tag'
+  export { cacheTag }
+
+  export const unstable_cacheTag: typeof cacheTag
+  export const unstable_cacheLife: typeof cacheLife
+}
+
+
+------------------------------------------------
+FILE: ./apps/web/.next/dev/types/routes.d.ts
+------------------------------------------------
+// This file is generated automatically by Next.js
+// Do not edit this file manually
+
+type AppRoutes = "/" | "/analysis/[id]" | "/getviz" | "/share/[shareId]" | "/viz"
+type PageRoutes = never
+type LayoutRoutes = "/"
+type RedirectRoutes = never
+type RewriteRoutes = never
+type Routes = AppRoutes | PageRoutes | LayoutRoutes | RedirectRoutes | RewriteRoutes
+
+
+interface ParamMap {
+  "/": {}
+  "/analysis/[id]": { "id": string; }
+  "/getviz": {}
+  "/share/[shareId]": { "shareId": string; }
+  "/viz": {}
+}
+
+
+export type ParamsOf<Route extends Routes> = ParamMap[Route]
+
+interface LayoutSlotMap {
+  "/": never
+}
+
+
+export type { AppRoutes, PageRoutes, LayoutRoutes, RedirectRoutes, RewriteRoutes, ParamMap }
+
+declare global {
+  /**
+   * Props for Next.js App Router page components
+   * @example
+   * ```tsx
+   * export default function Page(props: PageProps<'/blog/[slug]'>) {
+   *   const { slug } = await props.params
+   *   return <div>Blog post: {slug}</div>
+   * }
+   * ```
+   */
+  interface PageProps<AppRoute extends AppRoutes> {
+    params: Promise<ParamMap[AppRoute]>
+    searchParams: Promise<Record<string, string | string[] | undefined>>
   }
 
-  return result.data;
+  /**
+   * Props for Next.js App Router layout components
+   * @example
+   * ```tsx
+   * export default function Layout(props: LayoutProps<'/dashboard'>) {
+   *   return <div>{props.children}</div>
+   * }
+   * ```
+   */
+  type LayoutProps<LayoutRoute extends LayoutRoutes> = {
+    params: Promise<ParamMap[LayoutRoute]>
+    children: React.ReactNode
+  } & {
+    [K in LayoutSlotMap[LayoutRoute]]: React.ReactNode
+  }
 }
+
+
+------------------------------------------------
+FILE: ./apps/web/.next/dev/types/validator.ts
+------------------------------------------------
+// This file is generated automatically by Next.js
+// Do not edit this file manually
+// This file validates that all pages and layouts export the correct types
+
+import type { AppRoutes, LayoutRoutes, ParamMap } from "./routes.js"
+import type { ResolvingMetadata, ResolvingViewport } from "next/types.js"
+
+type AppPageConfig<Route extends AppRoutes = AppRoutes> = {
+  default: React.ComponentType<{ params: Promise<ParamMap[Route]> } & any> | ((props: { params: Promise<ParamMap[Route]> } & any) => React.ReactNode | Promise<React.ReactNode> | never | void | Promise<void>)
+  generateStaticParams?: (props: { params: ParamMap[Route] }) => Promise<any[]> | any[]
+  generateMetadata?: (
+    props: { params: Promise<ParamMap[Route]> } & any,
+    parent: ResolvingMetadata
+  ) => Promise<any> | any
+  generateViewport?: (
+    props: { params: Promise<ParamMap[Route]> } & any,
+    parent: ResolvingViewport
+  ) => Promise<any> | any
+  metadata?: any
+  viewport?: any
+}
+
+type LayoutConfig<Route extends LayoutRoutes = LayoutRoutes> = {
+  default: React.ComponentType<LayoutProps<Route>> | ((props: LayoutProps<Route>) => React.ReactNode | Promise<React.ReactNode> | never | void | Promise<void>)
+  generateStaticParams?: (props: { params: ParamMap[Route] }) => Promise<any[]> | any[]
+  generateMetadata?: (
+    props: { params: Promise<ParamMap[Route]> } & any,
+    parent: ResolvingMetadata
+  ) => Promise<any> | any
+  generateViewport?: (
+    props: { params: Promise<ParamMap[Route]> } & any,
+    parent: ResolvingViewport
+  ) => Promise<any> | any
+  metadata?: any
+  viewport?: any
+}
+
+
+// Validate ../../../src/app/analysis/[id]/page.tsx
+{
+  type __IsExpected<Specific extends AppPageConfig<"/analysis/[id]">> = Specific
+  const handler = {} as typeof import("../../../src/app/analysis/[id]/page.js")
+  type __Check = __IsExpected<typeof handler>
+  // @ts-ignore
+  type __Unused = __Check
+}
+
+// Validate ../../../src/app/getviz/page.tsx
+{
+  type __IsExpected<Specific extends AppPageConfig<"/getviz">> = Specific
+  const handler = {} as typeof import("../../../src/app/getviz/page.js")
+  type __Check = __IsExpected<typeof handler>
+  // @ts-ignore
+  type __Unused = __Check
+}
+
+// Validate ../../../src/app/page.tsx
+{
+  type __IsExpected<Specific extends AppPageConfig<"/">> = Specific
+  const handler = {} as typeof import("../../../src/app/page.js")
+  type __Check = __IsExpected<typeof handler>
+  // @ts-ignore
+  type __Unused = __Check
+}
+
+// Validate ../../../src/app/share/[shareId]/page.tsx
+{
+  type __IsExpected<Specific extends AppPageConfig<"/share/[shareId]">> = Specific
+  const handler = {} as typeof import("../../../src/app/share/[shareId]/page.js")
+  type __Check = __IsExpected<typeof handler>
+  // @ts-ignore
+  type __Unused = __Check
+}
+
+// Validate ../../../src/app/viz/page.tsx
+{
+  type __IsExpected<Specific extends AppPageConfig<"/viz">> = Specific
+  const handler = {} as typeof import("../../../src/app/viz/page.js")
+  type __Check = __IsExpected<typeof handler>
+  // @ts-ignore
+  type __Unused = __Check
+}
+
+
+
+
+
+
+
+// Validate ../../../src/app/layout.tsx
+{
+  type __IsExpected<Specific extends LayoutConfig<"/">> = Specific
+  const handler = {} as typeof import("../../../src/app/layout.js")
+  type __Check = __IsExpected<typeof handler>
+  // @ts-ignore
+  type __Unused = __Check
+}
+
 
 ------------------------------------------------
 FILE: ./apps/web/.next/types/cache-life.d.ts
@@ -3040,7 +3522,7 @@ FILE: ./apps/web/.next/types/routes.d.ts
 // This file is generated automatically by Next.js
 // Do not edit this file manually
 
-type AppRoutes = "/" | "/analysis/[id]" | "/share/[shareId]"
+type AppRoutes = "/" | "/analysis/[id]" | "/getviz" | "/share/[shareId]" | "/viz"
 type PageRoutes = never
 type LayoutRoutes = "/"
 type RedirectRoutes = never
@@ -3051,7 +3533,9 @@ type Routes = AppRoutes | PageRoutes | LayoutRoutes | RedirectRoutes | RewriteRo
 interface ParamMap {
   "/": {}
   "/analysis/[id]": { "id": string; }
+  "/getviz": {}
   "/share/[shareId]": { "shareId": string; }
+  "/viz": {}
 }
 
 
@@ -3148,6 +3632,15 @@ type LayoutConfig<Route extends LayoutRoutes = LayoutRoutes> = {
   type __Unused = __Check
 }
 
+// Validate ../../src/app/getviz/page.tsx
+{
+  type __IsExpected<Specific extends AppPageConfig<"/getviz">> = Specific
+  const handler = {} as typeof import("../../src/app/getviz/page.js")
+  type __Check = __IsExpected<typeof handler>
+  // @ts-ignore
+  type __Unused = __Check
+}
+
 // Validate ../../src/app/page.tsx
 {
   type __IsExpected<Specific extends AppPageConfig<"/">> = Specific
@@ -3161,6 +3654,15 @@ type LayoutConfig<Route extends LayoutRoutes = LayoutRoutes> = {
 {
   type __IsExpected<Specific extends AppPageConfig<"/share/[shareId]">> = Specific
   const handler = {} as typeof import("../../src/app/share/[shareId]/page.js")
+  type __Check = __IsExpected<typeof handler>
+  // @ts-ignore
+  type __Unused = __Check
+}
+
+// Validate ../../src/app/viz/page.tsx
+{
+  type __IsExpected<Specific extends AppPageConfig<"/viz">> = Specific
+  const handler = {} as typeof import("../../src/app/viz/page.js")
   type __Check = __IsExpected<typeof handler>
   // @ts-ignore
   type __Unused = __Check
@@ -3187,7 +3689,7 @@ FILE: ./apps/web/next-env.d.ts
 ------------------------------------------------
 /// <reference types="next" />
 /// <reference types="next/image-types/global" />
-import "./.next/types/routes.d.ts";
+import "./.next/dev/types/routes.d.ts";
 
 // NOTE: This file should not be edited
 // see https://nextjs.org/docs/app/api-reference/config/typescript for more information.
@@ -3339,6 +3841,366 @@ export default function AnalysisDetailPage() {
   );
 }
 
+
+------------------------------------------------
+FILE: ./apps/web/src/app/getviz/page.tsx
+------------------------------------------------
+"use client";
+
+import { useState, useEffect } from "react";
+import { API_URL } from "@/lib/config";
+import { useAuth } from "@/context/Authcontext";
+import { useRouter } from "next/navigation";
+
+function getCsrfToken(): string {
+  if (typeof document === "undefined") return "";
+  const match = document.cookie.match(/(^| )af_csrf=([^;]+)/);
+  return match ? match[2] : "";
+}
+
+type LogEntry = {
+  type: "info" | "success" | "error";
+  message: string;
+};
+
+const BUBBLE_SORT_FORGE_BODY = `const arr = [...input.array];
+forge.init("array", "arr", arr);
+forge.setMessage("Starting Bubble Sort");
+forge.snap();
+const n = arr.length;
+for (let i = 0; i < n - 1; i++) {
+  forge.setPhase("Pass " + (i + 1));
+  for (let j = 0; j < n - 1 - i; j++) {
+    forge.highlight("arr", [j, j + 1], "comparing");
+    forge.setPointers("arr", { j: j, "j+1": j + 1 });
+    forge.setMessage("Comparing " + arr[j] + " and " + arr[j + 1]);
+    forge.snap();
+    if (arr[j] > arr[j + 1]) {
+      const tmp = arr[j];
+      arr[j] = arr[j + 1];
+      arr[j + 1] = tmp;
+      forge.swap("arr", j, j + 1);
+      forge.highlight("arr", [j, j + 1], "swapped");
+      forge.setMessage("Swapped → " + arr[j] + " and " + arr[j + 1]);
+      forge.snap();
+    }
+  }
+  forge.markSorted("arr", n - 1 - i);
+  forge.setMessage("Position " + (n - 1 - i) + " is now sorted");
+  forge.snap();
+}
+forge.markAllSorted("arr");
+forge.setMessage("Array is fully sorted!");
+forge.done();`;
+
+const BUBBLE_SORT_JS_CODE = `function bubbleSort(arr) {
+  const n = arr.length;
+  for (let i = 0; i < n - 1; i++) {
+    for (let j = 0; j < n - 1 - i; j++) {
+      if (arr[j] > arr[j + 1]) {
+        [arr[j], arr[j + 1]] = [arr[j + 1], arr[j]];
+      }
+    }
+  }
+  return arr;
+}`;
+
+const BUBBLE_SORT_PYTHON_CODE = `def bubble_sort(arr):
+    n = len(arr)
+    for i in range(n - 1):
+        for j in range(n - 1 - i):
+            if arr[j] > arr[j + 1]:
+                arr[j], arr[j + 1] = arr[j + 1], arr[j]
+    return arr`;
+
+export default function AlgorithmSeederPage() {
+  const [loading, setLoading] = useState(false);
+  const [log, setLog] = useState<LogEntry[]>([]);
+  const { user, isLoading } = useAuth();
+  const router = useRouter();
+
+  if (isLoading) {
+    return null;
+  }
+
+  function addLog(type: LogEntry["type"], message: string) {
+    setLog((prev) => [...prev, { type, message }]);
+  }
+
+  async function apiPost(path: string, body: unknown): Promise<{ ok: boolean; data: unknown }> {
+    const csrfToken = getCsrfToken();
+    const res = await fetch(`${API_URL}${path}`, {
+      method: "POST",
+      credentials: "include",
+      headers: {
+        "Content-Type": "application/json",
+        ...(csrfToken ? { "X-CSRF-Token": csrfToken } : {}),
+      },
+      body: JSON.stringify(body),
+    });
+
+    const data = await res.json().catch(() => ({}));
+    return { ok: res.ok, data };
+  }
+
+  async function apiGet(path: string): Promise<{ ok: boolean; data: unknown }> {
+    const res = await fetch(`${API_URL}${path}`, {
+      credentials: "include",
+    });
+
+    const data = await res.json().catch(() => ({}));
+    return { ok: res.ok, data };
+  }
+
+  async function seedBubbleSort() {
+    setLoading(true);
+    setLog([]);
+
+    try {
+      // ── STEP 1: Ensure "Sorting" category exists ──────────────────────────
+      addLog("info", "Checking for existing categories...");
+
+      const categoriesResult = await apiGet("/api/categories");
+      if (!categoriesResult.ok) {
+        throw new Error("Failed to fetch categories");
+      }
+
+      const categories = categoriesResult.data as Array<{ id: string; label: string }>;
+      const existingCategory = categories.find(
+        (c) => c.label.toLowerCase() === "sorting" || c.id === "sorting",
+      );
+
+      let categoryId: string;
+
+      if (existingCategory) {
+        categoryId = existingCategory.id;
+        addLog("info", `Category already exists (id: ${categoryId})`);
+      } else {
+        addLog("info", "Creating 'Sorting' category...");
+
+        const catResult = await apiPost("/api/categories", {
+          id: "sorting",
+          label: "Sorting",
+          description: "Sorting algorithms",
+          iconName: "ArrowUpDown",
+          sortOrder: 1,
+        });
+
+        if (!catResult.ok) {
+          const err = catResult.data as { error?: string };
+          throw new Error(err.error ?? "Failed to create category");
+        }
+
+        categoryId = (catResult.data as { id: string }).id;
+        addLog("success", `Category created (id: ${categoryId})`);
+      }
+
+      // ── STEP 2: Check if algorithm already exists ─────────────────────────
+      addLog("info", "Checking if Bubble Sort already exists...");
+
+      const algoCheckResult = await apiGet("/api/algorithms/slug/bubble-sort");
+      if (algoCheckResult.ok) {
+        addLog("info", "Algorithm 'bubble-sort' already exists — skipping creation.");
+        addLog("success", "Done. No duplicates created.");
+        return;
+      }
+
+      // ── STEP 3: Create the Algorithm ──────────────────────────────────────
+      addLog("info", "Creating Bubble Sort algorithm...");
+
+      const algoResult = await apiPost("/api/algorithms", {
+        slug: "bubble-sort",
+        name: "Bubble Sort",
+        description:
+          "A simple comparison-based sorting algorithm. It repeatedly steps through the list, compares adjacent elements and swaps them if they are in the wrong order. The pass through the list is repeated until the list is sorted.",
+        categoryId,
+        difficulty: "beginner",
+        isPublished: true,
+      });
+
+      if (!algoResult.ok) {
+        const err = algoResult.data as { error?: string };
+        throw new Error(err.error ?? "Failed to create algorithm");
+      }
+
+      addLog("success", "Algorithm created.");
+
+      // ── Summary ───────────────────────────────────────────────────────────
+      addLog("info", "─────────────────────────────────────");
+      addLog("info", `Forge Code (JS):`);
+      addLog("info", BUBBLE_SORT_FORGE_BODY.substring(0, 120) + "...");
+      addLog("info", "─────────────────────────────────────");
+      addLog("info", `Display Code (JS):\n${BUBBLE_SORT_JS_CODE}`);
+      addLog("info", "─────────────────────────────────────");
+      addLog("info", `Display Code (Python):\n${BUBBLE_SORT_PYTHON_CODE}`);
+      addLog("info", "─────────────────────────────────────");
+      addLog(
+        "info",
+        "Note: Complexity, DisplayCode, and ForgeCode require dedicated backend endpoints not yet exposed via the API.",
+      );
+      addLog("success", "🎉 Seeding complete. Visit /viz to see the algorithm list.");
+    } catch (err: unknown) {
+      addLog("error", `❌ ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div style={{ padding: 24, maxWidth: 800, margin: "0 auto" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}>
+        <h2 style={{ margin: 0 }}>Algorithm Seeder</h2>
+        <a
+          href="/viz"
+          style={{
+            padding: "6px 14px",
+            background: "#eee",
+            textDecoration: "none",
+            color: "#333",
+            borderRadius: 6,
+            fontSize: 14,
+          }}
+        >
+          ← View Algorithms
+        </a>
+      </div>
+
+      <div
+        style={{
+          border: "1px solid #ddd",
+          borderRadius: 8,
+          padding: 20,
+          marginBottom: 24,
+          background: "#fafafa",
+        }}
+      >
+        <h3 style={{ margin: "0 0 8px" }}>Bubble Sort</h3>
+        <p style={{ margin: "0 0 16px", color: "#555", fontSize: 14 }}>
+          Seeds a "Sorting" category and a "Bubble Sort" algorithm. Idempotent — will not duplicate
+          if run multiple times.
+        </p>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 8, marginBottom: 16 }}>
+          {[
+            { label: "Best", value: "O(n)" },
+            { label: "Average", value: "O(n²)" },
+            { label: "Worst", value: "O(n²)" },
+            { label: "Space", value: "O(1)" },
+          ].map(({ label, value }) => (
+            <div
+              key={label}
+              style={{
+                background: "#fff",
+                border: "1px solid #eee",
+                borderRadius: 6,
+                padding: "8px 12px",
+              }}
+            >
+              <div style={{ fontSize: 11, color: "#999", textTransform: "uppercase" }}>{label}</div>
+              <div style={{ fontWeight: 600, fontSize: 15, marginTop: 2 }}>{value}</div>
+            </div>
+          ))}
+        </div>
+        <button
+          onClick={() => void seedBubbleSort()}
+          disabled={loading}
+          style={{
+            padding: "10px 24px",
+            background: loading ? "#888" : "#1a1a1a",
+            color: "white",
+            border: "none",
+            borderRadius: 6,
+            cursor: loading ? "not-allowed" : "pointer",
+            fontSize: 15,
+            fontWeight: 500,
+          }}
+        >
+          {loading ? "Seeding..." : "Seed Bubble Sort"}
+        </button>
+      </div>
+
+      {log.length > 0 && (
+        <div
+          style={{
+            border: "1px solid #e0e0e0",
+            borderRadius: 8,
+            overflow: "hidden",
+          }}
+        >
+          <div
+            style={{
+              background: "#1e1e1e",
+              padding: "8px 12px",
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+            }}
+          >
+            <span style={{ color: "#aaa", fontSize: 13 }}>Output</span>
+            <button
+              onClick={() => setLog([])}
+              style={{
+                background: "transparent",
+                border: "none",
+                color: "#666",
+                cursor: "pointer",
+                fontSize: 12,
+              }}
+            >
+              Clear
+            </button>
+          </div>
+          <div
+            style={{
+              background: "#1e1e1e",
+              padding: 16,
+              maxHeight: 400,
+              overflow: "auto",
+              fontFamily: "monospace",
+              fontSize: 13,
+              lineHeight: 1.6,
+            }}
+          >
+            {log.map((entry, i) => (
+              <div
+                key={i}
+                style={{
+                  color:
+                    entry.type === "success"
+                      ? "#4ade80"
+                      : entry.type === "error"
+                        ? "#f87171"
+                        : "#d1d5db",
+                  whiteSpace: "pre-wrap",
+                  wordBreak: "break-word",
+                }}
+              >
+                {entry.message}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div style={{ marginTop: 32 }}>
+        <h3 style={{ marginBottom: 12 }}>Forge Code Preview</h3>
+        <pre
+          style={{
+            background: "#1e1e1e",
+            color: "#d4d4d4",
+            padding: 16,
+            borderRadius: 8,
+            overflow: "auto",
+            fontSize: 12,
+            lineHeight: 1.6,
+            maxHeight: 300,
+          }}
+        >
+          <code>{BUBBLE_SORT_FORGE_BODY}</code>
+        </pre>
+      </div>
+    </div>
+  );
+}
 
 ------------------------------------------------
 FILE: ./apps/web/src/app/layout.tsx
@@ -3649,6 +4511,248 @@ export default function ShareClient({ analysis }: { analysis: any }) {
   );
 }
 
+
+------------------------------------------------
+FILE: ./apps/web/src/app/viz/page.tsx
+------------------------------------------------
+"use client";
+
+import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+import { API_URL } from "@/lib/config";
+
+type Complexity = {
+  timeBest: string | null;
+  timeAverage: string | null;
+  timeWorst: string | null;
+  space: string | null;
+};
+
+type AlgorithmListItem = {
+  id: string;
+  slug: string;
+  name: string;
+  categoryId: string;
+  difficulty: string;
+  complexity: Complexity | null;
+};
+
+export default function AlgorithmListPage() {
+  const router = useRouter();
+  const [algorithms, setAlgorithms] = useState<AlgorithmListItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [showRaw, setShowRaw] = useState(false);
+
+  useEffect(() => {
+    async function load() {
+      try {
+        const res = await fetch(`${API_URL}/api/algorithms`, {
+          credentials: "include",
+        });
+
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          throw new Error((data as { error?: string }).error ?? "Failed to fetch algorithms");
+        }
+
+        const data = await res.json();
+        setAlgorithms(data as AlgorithmListItem[]);
+      } catch (err: unknown) {
+        setError(err instanceof Error ? err.message : "Unknown error");
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    void load();
+  }, []);
+
+  if (loading) {
+    return (
+      <div style={{ padding: 24 }}>
+        <p>Loading algorithms...</p>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div style={{ padding: 24 }}>
+        <p style={{ color: "red" }}>Error: {error}</p>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ padding: 24, maxWidth: 900, margin: "0 auto" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}>
+        <h2 style={{ margin: 0 }}>Algorithms ({algorithms.length})</h2>
+        <div style={{ display: "flex", gap: 8 }}>
+          <a
+            href="/getviz"
+            style={{
+              padding: "6px 14px",
+              background: "#1a1a1a",
+              color: "white",
+              textDecoration: "none",
+              borderRadius: 6,
+              fontSize: 14,
+            }}
+          >
+            + Seed Data
+          </a>
+          <button
+            onClick={() => setShowRaw((v) => !v)}
+            style={{
+              padding: "6px 14px",
+              background: "#eee",
+              border: "none",
+              borderRadius: 6,
+              cursor: "pointer",
+              fontSize: 14,
+            }}
+          >
+            {showRaw ? "Hide" : "Show"} Raw JSON
+          </button>
+        </div>
+      </div>
+
+      {algorithms.length === 0 ? (
+        <p style={{ color: "#888" }}>
+          No algorithms found.{" "}
+          <a href="/getviz" style={{ color: "blue" }}>
+            Seed some data →
+          </a>
+        </p>
+      ) : (
+        <div style={{ display: "grid", gap: 12 }}>
+          {algorithms.map((algo) => (
+            <div
+              key={algo.id}
+              onClick={() => router.push(`/viz/${algo.slug}`)}
+              style={{
+                border: "1px solid #ddd",
+                borderRadius: 8,
+                padding: 16,
+                cursor: "pointer",
+                background: "#fff",
+                transition: "border-color 0.15s",
+              }}
+              onMouseEnter={(e) => {
+                (e.currentTarget as HTMLDivElement).style.borderColor = "#666";
+              }}
+              onMouseLeave={(e) => {
+                (e.currentTarget as HTMLDivElement).style.borderColor = "#ddd";
+              }}
+            >
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "flex-start",
+                  marginBottom: 6,
+                }}
+              >
+                <div>
+                  <h3 style={{ margin: 0, fontSize: 16 }}>{algo.name}</h3>
+                  <span style={{ fontSize: 12, color: "#888", marginTop: 2, display: "block" }}>
+                    slug: {algo.slug}
+                  </span>
+                </div>
+                <span
+                  style={{
+                    fontSize: 12,
+                    background: difficultyColor(algo.difficulty),
+                    padding: "2px 10px",
+                    borderRadius: 12,
+                    fontWeight: 500,
+                    textTransform: "capitalize",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {algo.difficulty}
+                </span>
+              </div>
+
+              {algo.complexity ? (
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "repeat(4, 1fr)",
+                    gap: 8,
+                    marginTop: 10,
+                    fontSize: 13,
+                  }}
+                >
+                  <ComplexityBadge label="Best" value={algo.complexity.timeBest} />
+                  <ComplexityBadge label="Average" value={algo.complexity.timeAverage} />
+                  <ComplexityBadge label="Worst" value={algo.complexity.timeWorst} />
+                  <ComplexityBadge label="Space" value={algo.complexity.space} />
+                </div>
+              ) : (
+                <p style={{ fontSize: 12, color: "#aaa", margin: "8px 0 0" }}>
+                  No complexity data
+                </p>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {showRaw && (
+        <div style={{ marginTop: 32 }}>
+          <h4 style={{ marginBottom: 8 }}>Raw JSON</h4>
+          <pre
+            style={{
+              background: "#f5f5f5",
+              border: "1px solid #e0e0e0",
+              padding: 16,
+              borderRadius: 6,
+              overflow: "auto",
+              fontSize: 12,
+              lineHeight: 1.5,
+              maxHeight: 500,
+            }}
+          >
+            {JSON.stringify(algorithms, null, 2)}
+          </pre>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ComplexityBadge({ label, value }: { label: string; value: string | null }) {
+  return (
+    <div
+      style={{
+        background: "#f8f8f8",
+        border: "1px solid #eee",
+        borderRadius: 6,
+        padding: "4px 8px",
+      }}
+    >
+      <div style={{ fontSize: 10, color: "#999", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+        {label}
+      </div>
+      <div style={{ fontWeight: 600, marginTop: 2 }}>{value ?? "—"}</div>
+    </div>
+  );
+}
+
+function difficultyColor(difficulty: string): string {
+  switch (difficulty) {
+    case "beginner":
+      return "#dcfce7";
+    case "intermediate":
+      return "#fef9c3";
+    case "advanced":
+      return "#fee2e2";
+    default:
+      return "#f3f4f6";
+  }
+}
 
 ------------------------------------------------
 FILE: ./apps/web/src/components/AnalysisForm.tsx
@@ -4082,32 +5186,6 @@ export function AnalysisResult({ result }: Props) {
 
 
 ------------------------------------------------
-FILE: ./apps/web/src/components/AuthProvider.tsx
-------------------------------------------------
-"use client";
-
-import { useEffect } from "react";
-import { useAuthStore } from "@/store/useAuthStore";
-import { fetchMe } from "@/lib/auth";
-
-export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const { setUser, setLoading } = useAuthStore();
-
-  useEffect(() => {
-    async function initAuth() {
-      setLoading(true);
-      const user = await fetchMe();
-      setUser(user);
-    }
-
-    initAuth();
-  }, [setUser, setLoading]);
-
-  return <>{children}</>;
-}
-
-
-------------------------------------------------
 FILE: ./apps/web/src/components/LoginButton.tsx
 ------------------------------------------------
 "use client";
@@ -4196,12 +5274,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             await apiFetch("/api/auth/logout", {
                 method: "POST",
             });
+            setUser(null);
+            resetAnalysisHistory();
         } catch (error) {
             console.error("Logout failed:", error);
         }
-
-        setUser(null);
-        resetAnalysisHistory();
     };
 
     return (
@@ -4263,7 +5340,7 @@ async function parseError(response: Response): Promise<never> {
   throw new AnalysisApiError(message, response.status);
 }
 
-export async function fetchAnalysesPage(cursor: string | null): Promise<AnalysisHistoryResponse> {
+export async function fetchAnalysesPage(cursor: string | null, signal?: AbortSignal): Promise<AnalysisHistoryResponse> {
   const params = new URLSearchParams({
     limit: String(DEFAULT_PAGE_LIMIT),
   });
@@ -4272,7 +5349,7 @@ export async function fetchAnalysesPage(cursor: string | null): Promise<Analysis
     params.set("cursor", cursor);
   }
 
-  const response = await apiFetch(`/api/analyses?${params.toString()}`);
+  const response = await apiFetch(`/api/analyses?${params.toString()}`, { signal });
 
   if (!response.ok) {
     return parseError(response);
@@ -4281,8 +5358,8 @@ export async function fetchAnalysesPage(cursor: string | null): Promise<Analysis
   return AnalysisHistoryResponseSchema.parse(await response.json());
 }
 
-export async function fetchAnalysisById(analysisId: string): Promise<AnalysisRecord> {
-  const response = await apiFetch(`/api/analyses/${analysisId}`);
+export async function fetchAnalysisById(analysisId: string, signal?: AbortSignal): Promise<AnalysisRecord> {
+  const response = await apiFetch(`/api/analyses/${analysisId}`, { signal });
 
   if (!response.ok) {
     return parseError(response);
@@ -4482,18 +5559,17 @@ type AnalysisHistoryState = {
   pageError: string | null;
   activeAnalysisId: string | null;
   activeDetailError: string | null;
+  pageAbortController: AbortController | null;
+  detailAbortControllers: Record<string, AbortController>;
   reset: () => void;
   cacheAnalysis: (analysis: AnalysisRecord) => void;
   fetchInitialPage: () => Promise<void>;
   fetchNextPage: () => Promise<void>;
-  fetchAnalysis: (analysisId: string) => Promise<AnalysisRecord>;
+  fetchAnalysis: (analysisId: string) => Promise<AnalysisRecord | undefined>;
   setActiveAnalysisId: (analysisId: string | null) => void;
 };
 
 const INITIAL_CURSOR_KEY = "__initial__";
-const pageRequests = new Map<string, Promise<void>>();
-const detailRequests = new Map<string, Promise<AnalysisRecord>>();
-let storeGeneration = 0;
 
 function sortHistoryIds(historyById: Record<string, AnalysisHistoryItem>): string[] {
   return Object.values(historyById)
@@ -4536,124 +5612,6 @@ function mergeHistoryItems(
   };
 }
 
-function createPageRequest(
-  cursor: string | null,
-  set: (
-    partial:
-      | Partial<AnalysisHistoryState>
-      | ((state: AnalysisHistoryState) => Partial<AnalysisHistoryState>),
-  ) => void,
-) {
-  const cursorKey = cursor ?? INITIAL_CURSOR_KEY;
-  const existingRequest = pageRequests.get(cursorKey);
-  const requestGeneration = storeGeneration;
-
-  if (existingRequest) {
-    return existingRequest;
-  }
-
-  const request = (async () => {
-    set({
-      isFetchingPage: true,
-      pageError: null,
-    });
-
-    try {
-      const response = await fetchAnalysesPage(cursor);
-      if (requestGeneration !== storeGeneration) {
-        return;
-      }
-
-      set((state) => {
-        const merged = mergeHistoryItems(state.historyById, response.data);
-        const nextFetchedCursorKeys = state.fetchedCursorKeys.includes(cursorKey)
-          ? state.fetchedCursorKeys
-          : [...state.fetchedCursorKeys, cursorKey];
-
-        return {
-          ...merged,
-          fetchedCursorKeys: nextFetchedCursorKeys,
-          nextCursor: response.meta.nextCursor,
-          hasMore: response.meta.hasMore,
-          initialized: true,
-        };
-      });
-    } catch (error) {
-      if (requestGeneration !== storeGeneration) {
-        return;
-      }
-
-      set({
-        pageError: error instanceof Error ? error.message : "Failed to load analyses.",
-      });
-      throw error;
-    } finally {
-      pageRequests.delete(cursorKey);
-      if (requestGeneration === storeGeneration && pageRequests.size === 0) {
-        set({ isFetchingPage: false });
-      }
-    }
-  })();
-
-  pageRequests.set(cursorKey, request);
-  return request;
-}
-
-function createDetailRequest(
-  analysisId: string,
-  set: (
-    partial:
-      | Partial<AnalysisHistoryState>
-      | ((state: AnalysisHistoryState) => Partial<AnalysisHistoryState>),
-  ) => void,
-) {
-  const existingRequest = detailRequests.get(analysisId);
-  const requestGeneration = storeGeneration;
-
-  if (existingRequest) {
-    return existingRequest;
-  }
-
-  const request = (async () => {
-    try {
-      const analysis = await fetchAnalysisById(analysisId);
-      if (requestGeneration !== storeGeneration) {
-        throw new Error("Analysis request expired.");
-      }
-
-      set((state) => {
-        const merged = mergeHistoryItems(state.historyById, [toHistoryItem(analysis)]);
-
-        return {
-          ...merged,
-          analysesById: {
-            ...state.analysesById,
-            [analysis.id]: analysis,
-          },
-          activeDetailError: null,
-        };
-      });
-
-      return analysis;
-    } catch (error) {
-      if (requestGeneration !== storeGeneration) {
-        throw error;
-      }
-
-      set({
-        activeDetailError:
-          error instanceof Error ? error.message : "Failed to load this analysis.",
-      });
-      throw error;
-    } finally {
-      detailRequests.delete(analysisId);
-    }
-  })();
-
-  detailRequests.set(analysisId, request);
-  return request;
-}
-
 export const useAnalysisHistoryStore = create<AnalysisHistoryState>((set, get) => ({
   analysesById: {},
   historyById: {},
@@ -4666,10 +5624,14 @@ export const useAnalysisHistoryStore = create<AnalysisHistoryState>((set, get) =
   pageError: null,
   activeAnalysisId: null,
   activeDetailError: null,
+  pageAbortController: null,
+  detailAbortControllers: {},
+
   reset: () => {
-    storeGeneration += 1;
-    pageRequests.clear();
-    detailRequests.clear();
+    const state = get();
+    if (state.pageAbortController) state.pageAbortController.abort();
+    Object.values(state.detailAbortControllers).forEach(ac => ac.abort());
+    
     set({
       analysesById: {},
       historyById: {},
@@ -4682,8 +5644,11 @@ export const useAnalysisHistoryStore = create<AnalysisHistoryState>((set, get) =
       pageError: null,
       activeAnalysisId: null,
       activeDetailError: null,
+      pageAbortController: null,
+      detailAbortControllers: {},
     });
   },
+
   cacheAnalysis: (analysis) =>
     set((state) => {
       const merged = mergeHistoryItems(state.historyById, [toHistoryItem(analysis)]);
@@ -4697,6 +5662,7 @@ export const useAnalysisHistoryStore = create<AnalysisHistoryState>((set, get) =
         activeAnalysisId: analysis.id,
       };
     }),
+
   fetchInitialPage: async () => {
     const state = get();
 
@@ -4704,8 +5670,40 @@ export const useAnalysisHistoryStore = create<AnalysisHistoryState>((set, get) =
       return;
     }
 
-    await createPageRequest(null, set);
+    if (state.pageAbortController) state.pageAbortController.abort();
+    const ac = new AbortController();
+    set({ pageAbortController: ac, isFetchingPage: true, pageError: null });
+
+    try {
+      const response = await fetchAnalysesPage(null, ac.signal);
+      if (ac.signal.aborted) return;
+
+      set((curr) => {
+        const merged = mergeHistoryItems(curr.historyById, response.data);
+        const nextFetchedCursorKeys = curr.fetchedCursorKeys.includes(INITIAL_CURSOR_KEY)
+          ? curr.fetchedCursorKeys
+          : [...curr.fetchedCursorKeys, INITIAL_CURSOR_KEY];
+
+        return {
+          ...merged,
+          fetchedCursorKeys: nextFetchedCursorKeys,
+          nextCursor: response.meta.nextCursor,
+          hasMore: response.meta.hasMore,
+          initialized: true,
+          isFetchingPage: false,
+          pageAbortController: null,
+        };
+      });
+    } catch (error) {
+      if (ac.signal.aborted) return;
+      set({
+        pageError: error instanceof Error ? error.message : "Failed to load analyses.",
+        isFetchingPage: false,
+        pageAbortController: null,
+      });
+    }
   },
+
   fetchNextPage: async () => {
     const state = get();
 
@@ -4716,11 +5714,45 @@ export const useAnalysisHistoryStore = create<AnalysisHistoryState>((set, get) =
     if (state.fetchedCursorKeys.includes(state.nextCursor)) {
       return;
     }
+    
+    const cursor = state.nextCursor;
 
-    await createPageRequest(state.nextCursor, set);
+    if (state.pageAbortController) state.pageAbortController.abort();
+    const ac = new AbortController();
+    set({ pageAbortController: ac, isFetchingPage: true, pageError: null });
+
+    try {
+      const response = await fetchAnalysesPage(cursor, ac.signal);
+      if (ac.signal.aborted) return;
+
+      set((curr) => {
+        const merged = mergeHistoryItems(curr.historyById, response.data);
+        const nextFetchedCursorKeys = curr.fetchedCursorKeys.includes(cursor)
+          ? curr.fetchedCursorKeys
+          : [...curr.fetchedCursorKeys, cursor];
+
+        return {
+          ...merged,
+          fetchedCursorKeys: nextFetchedCursorKeys,
+          nextCursor: response.meta.nextCursor,
+          hasMore: response.meta.hasMore,
+          isFetchingPage: false,
+          pageAbortController: null,
+        };
+      });
+    } catch (error) {
+      if (ac.signal.aborted) return;
+      set({
+        pageError: error instanceof Error ? error.message : "Failed to load analyses.",
+        isFetchingPage: false,
+        pageAbortController: null,
+      });
+    }
   },
+
   fetchAnalysis: async (analysisId) => {
-    const cached = get().analysesById[analysisId];
+    const state = get();
+    const cached = state.analysesById[analysisId];
 
     if (cached) {
       set({
@@ -4730,51 +5762,58 @@ export const useAnalysisHistoryStore = create<AnalysisHistoryState>((set, get) =
       return cached;
     }
 
-    set({
+    if (state.detailAbortControllers[analysisId]) {
+      state.detailAbortControllers[analysisId].abort();
+    }
+    const ac = new AbortController();
+    
+    set((curr) => ({
       activeAnalysisId: analysisId,
       activeDetailError: null,
-    });
+      detailAbortControllers: { ...curr.detailAbortControllers, [analysisId]: ac },
+    }));
 
-    return createDetailRequest(analysisId, set);
+    try {
+      const analysis = await fetchAnalysisById(analysisId, ac.signal);
+      if (ac.signal.aborted) return undefined;
+
+      set((curr) => {
+        const merged = mergeHistoryItems(curr.historyById, [toHistoryItem(analysis)]);
+        const newDetailAbortControllers = { ...curr.detailAbortControllers };
+        delete newDetailAbortControllers[analysisId];
+
+        return {
+          ...merged,
+          analysesById: {
+            ...curr.analysesById,
+            [analysis.id]: analysis,
+          },
+          activeDetailError: null,
+          detailAbortControllers: newDetailAbortControllers,
+        };
+      });
+      return analysis;
+    } catch (error) {
+      if (ac.signal.aborted) return undefined;
+      set((curr) => {
+        const newDetailAbortControllers = { ...curr.detailAbortControllers };
+        delete newDetailAbortControllers[analysisId];
+
+        return {
+          activeDetailError: error instanceof Error ? error.message : "Failed to load this analysis.",
+          detailAbortControllers: newDetailAbortControllers,
+        };
+      });
+      throw error;
+    }
   },
+
   setActiveAnalysisId: (analysisId) =>
     set({
       activeAnalysisId: analysisId,
       activeDetailError: null,
     }),
 }));
-
-
-------------------------------------------------
-FILE: ./apps/web/src/store/useAuthStore.ts
-------------------------------------------------
-import { create } from "zustand";
-import { persist } from "zustand/middleware";
-import { type SafeUser } from "@algoforge/analysis";
-
-interface AuthState {
-  user: SafeUser | null;
-  isLoading: boolean;
-  setUser: (user: SafeUser | null) => void;
-  setLoading: (isLoading: boolean) => void;
-  clearAuth: () => void;
-}
-
-export const useAuthStore = create<AuthState>()(
-  persist(
-    (set) => ({
-      user: null,
-      isLoading: true,
-      setUser: (user) => set({ user, isLoading: false }),
-      setLoading: (isLoading) => set({ isLoading }),
-      clearAuth: () => set({ user: null, isLoading: false }),
-    }),
-    {
-      name: "af-auth-storage",
-      partialize: (state) => ({ user: state.user }),
-    }
-  )
-);
 
 
 ------------------------------------------------
@@ -4972,9 +6011,8 @@ model Analysis {
   userId       String
   code         String
   language     String
-  complexity   String?
+  complexity   Json?
   suggestion   String?
-  timeEstimate String?
   result       Json
   shareId      String?  @unique
   isPublic     Boolean  @default(false)
@@ -5004,34 +6042,68 @@ model Algorithm {
   name            String
   description     String
   categoryId      String
-  forgeCode       Json
-  inputSchema     Json
-  guardRanges     Json
-  timeComplexity  String?
-  spaceComplexity String?
   difficulty      Difficulty @default(beginner)
-  tags            String[]   @default([])
   isPublished     Boolean    @default(false)
   createdAt       DateTime   @default(now())
   updatedAt       DateTime   @updatedAt
+
   category        Category   @relation(fields: [categoryId], references: [id])
-  snapshots       Snapshot[]
+  complexity      Complexity?
+  displayCode     DisplayCode?
+  forge           AlgorithmForge?
+  tags            AlgorithmTag[]
 
   @@index([categoryId])
   @@index([slug])
+  @@index([difficulty])
   @@index([isPublished])
 }
 
-model Snapshot {
-  id              String    @id @default(uuid())
-  algorithmId     String
-  input           Json
-  steps           Json
-  executionTimeMs Int
-  createdAt       DateTime  @default(now())
-  algorithm       Algorithm @relation(fields: [algorithmId], references: [id], onDelete: Cascade)
+model Complexity {
+  id            String    @id @default(uuid())
+  algorithmId   String    @unique
+  timeBest      String?
+  timeAverage   String?
+  timeWorst     String?
+  space         String?
 
-  @@index([algorithmId, createdAt])
+  algorithm     Algorithm @relation(fields: [algorithmId], references: [id], onDelete: Cascade)
+}
+
+model DisplayCode {
+  id            String    @id @default(uuid())
+  algorithmId   String    @unique
+  language      String
+  code          String
+
+  algorithm     Algorithm @relation(fields: [algorithmId], references: [id], onDelete: Cascade)
+}
+
+model AlgorithmForge {
+  id            String    @id @default(uuid())
+  algorithmId   String    @unique
+  forgeCode     Json
+  inputSchema   Json
+  guardRanges   Json
+  version       Int       @default(1)
+
+  algorithm     Algorithm @relation(fields: [algorithmId], references: [id], onDelete: Cascade)
+}
+
+model Tag {
+  id            String    @id @default(uuid())
+  label         String    @unique
+  algorithms    AlgorithmTag[]
+}
+
+model AlgorithmTag {
+  algorithmId   String
+  tagId         String
+
+  algorithm     Algorithm @relation(fields: [algorithmId], references: [id], onDelete: Cascade)
+  tag           Tag       @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([algorithmId, tagId])
 }
 
 ------------------------------------------------
@@ -5310,8 +6382,10 @@ export const GuardRangesSchema = z.object({
   startNode: z.enum(["first", "random"]).optional(),
 });
 
+export const InputSchema = z.record(z.string(), z.unknown());
+
 export const CreateCategorySchema = z.object({
-  id: z.string().min(1).max(50),
+  id: z.string().min(1).max(50).optional(), // ✅ optional
   label: z.string().min(1).max(100),
   description: z.string().max(500).optional(),
   iconName: z.string().max(50).optional(),
@@ -5325,21 +6399,61 @@ export const CreateAlgorithmSchema = z.object({
   name: z.string().min(1).max(200),
   description: z.string().min(1).max(2000),
   categoryId: z.string().min(1),
-  forgeCode: ForgeCodeSchema,
-  inputSchema: z.record(z.string(), z.unknown()),
-  guardRanges: GuardRangesSchema,
-  timeComplexity: z.string().max(100).optional(),
-  spaceComplexity: z.string().max(100).optional(),
   difficulty: DifficultySchema.default("beginner"),
-  tags: z.array(z.string().max(50)).default([]),
-  isPublished: z.boolean().default(false),
+  isPublished: z.boolean().default(false).optional(),
+
+  complexity: z.object({
+    time: z.object({
+      best: z.string(),
+      average: z.string(),
+      worst: z.string(),
+    }),
+    space: z.string(),
+  }),
+
+  displayCode: z.object({
+    code: z.string(),
+    language: z.string(),
+  }),
+
+  forge: z.object({
+    forgeCode: ForgeCodeSchema,
+    inputSchema: InputSchema,
+    guardRanges: GuardRangesSchema,
+  }),
+
+  tags: z.array(z.string()),
 });
 
-export const UpdateAlgorithmSchema = CreateAlgorithmSchema.partial().omit({ slug: true });
+export const UpdateAlgorithmSchema = z.object({
+  slug: z.string().min(1).max(100).regex(/^[a-z0-9-]+$/).optional(),
+  name: z.string().min(1).max(200).optional(),
+  description: z.string().min(1).max(2000).optional(),
+  categoryId: z.string().min(1).optional(),
+  difficulty: DifficultySchema.optional(),
+  isPublished: z.boolean().optional(),
 
-export const CreateSnapshotSchema = z.object({
-  algorithmId: z.string().uuid(),
-  input: z.record(z.string(), z.unknown()),
+  complexity: z.object({
+    time: z.object({
+      best: z.string().optional(),
+      average: z.string().optional(),
+      worst: z.string().optional(),
+    }).optional(),
+    space: z.string().optional(),
+  }).optional(),
+
+  displayCode: z.object({
+    code: z.string().optional(),
+    language: z.string().optional(),
+  }).optional(),
+
+  forge: z.object({
+    forgeCode: ForgeCodeSchema.optional(),
+    inputSchema: InputSchema.optional(),
+    guardRanges: GuardRangesSchema.optional(),
+  }).optional(),
+
+  tags: z.array(z.string()).optional(),
 });
 
 export const CategoryResponseSchema = z.object({
@@ -5352,41 +6466,73 @@ export const CategoryResponseSchema = z.object({
   updatedAt: z.string().datetime(),
 });
 
-export const AlgorithmResponseSchema = z.object({
+export const AlgorithmListItemSchema = z.object({
+  id: z.string(),
+  slug: z.string(),
+  name: z.string(),
+  categoryId: z.string(),
+  difficulty: DifficultySchema,
+  complexity: z.object({
+    timeBest: z.string().nullable(),
+    timeAverage: z.string().nullable(),
+    timeWorst: z.string().nullable(),
+    space: z.string().nullable(),
+  }).nullable()
+});
+
+export const AlgorithmDetailSchema = z.object({
   id: z.string(),
   slug: z.string(),
   name: z.string(),
   description: z.string(),
-  categoryId: z.string(),
-  forgeCode: ForgeCodeSchema,
-  inputSchema: z.record(z.string(), z.unknown()),
-  guardRanges: GuardRangesSchema,
-  timeComplexity: z.string().nullable(),
-  spaceComplexity: z.string().nullable(),
   difficulty: DifficultySchema,
-  tags: z.array(z.string()),
-  isPublished: z.boolean(),
-  createdAt: z.string().datetime(),
-  updatedAt: z.string().datetime(),
+  complexity: z.object({
+    timeBest: z.string().nullable(),
+    timeAverage: z.string().nullable(),
+    timeWorst: z.string().nullable(),
+    space: z.string().nullable(),
+  }).nullable(),
+  displayCode: z.object({
+    language: z.string(),
+    code: z.string(),
+  }).nullable(),
+  tags: z.array(z.object({
+    id: z.string(),
+    label: z.string()
+  })),
+  forge: z.object({
+    forgeCode: ForgeCodeSchema,
+    inputSchema: InputSchema,
+    guardRanges: GuardRangesSchema,
+    version: z.number().optional(),
+  }).nullable().optional(),
 });
 
-export const SnapshotResponseSchema = z.object({
-  id: z.string(),
-  algorithmId: z.string(),
-  input: z.record(z.string(), z.unknown()),
-  steps: z.array(z.unknown()),
-  executionTimeMs: z.number(),
-  createdAt: z.string().datetime(),
-});
+export const AlgorithmExecutionSchema = z.union([
+  z.object({
+    algorithmId: z.string(),
+    name: z.string(),
+    forge: z.object({
+      forgeCode: ForgeCodeSchema,
+      inputSchema: InputSchema,
+      guardRanges: GuardRangesSchema,
+      version: z.number().optional()
+    })
+  }),
+  z.object({
+    status: z.literal("INCOMPLETE_ALGORITHM"),
+    message: z.string()
+  })
+]);
 
 export type CreateCategory = z.infer<typeof CreateCategorySchema>;
 export type UpdateCategory = z.infer<typeof UpdateCategorySchema>;
 export type CreateAlgorithm = z.infer<typeof CreateAlgorithmSchema>;
 export type UpdateAlgorithm = z.infer<typeof UpdateAlgorithmSchema>;
-export type CreateSnapshot = z.infer<typeof CreateSnapshotSchema>;
 export type CategoryResponse = z.infer<typeof CategoryResponseSchema>;
-export type AlgorithmResponse = z.infer<typeof AlgorithmResponseSchema>;
-export type SnapshotResponse = z.infer<typeof SnapshotResponseSchema>;
+export type AlgorithmListItem = z.infer<typeof AlgorithmListItemSchema>;
+export type AlgorithmDetail = z.infer<typeof AlgorithmDetailSchema>;
+export type AlgorithmExecution = z.infer<typeof AlgorithmExecutionSchema>;
 
 ------------------------------------------------
 FILE: ./packages/forge/src/types.ts

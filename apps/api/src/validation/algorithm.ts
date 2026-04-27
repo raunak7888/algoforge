@@ -1,3 +1,4 @@
+import { Request, Response, NextFunction } from "express";
 import {
     CreateAlgorithmSchema,
     UpdateAlgorithmSchema,
@@ -51,4 +52,27 @@ export function parseAlgorithmQuery(value: unknown): AlgorithmQuery {
                   : undefined,
         search: typeof query.search === "string" ? query.search : undefined,
     };
+}
+
+export function validateIdParam(req: Request, res: Response, next: NextFunction) {
+    const id = req.params.id;
+    // UUID format or cuid format (both typically alphanumeric with hyphens)
+    const uuidRegex = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+    const cuidRegex = /^c[a-z0-9]{24}$/;
+    
+    if (!id || (!uuidRegex.test(id) && !cuidRegex.test(id))) {
+        return next(AppError.badRequest("Invalid algorithm ID format. Expected UUID or cuid."));
+    }
+    next();
+}
+
+export function validateSlugParam(req: Request, res: Response, next: NextFunction) {
+    const slug = req.params.slug;
+    // Kebab case string
+    const slugRegex = /^[a-z0-9-]+$/;
+    
+    if (!slug || !slugRegex.test(slug)) {
+        return next(AppError.badRequest("Invalid slug format. Expected kebab-case string."));
+    }
+    next();
 }
