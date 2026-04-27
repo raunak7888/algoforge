@@ -12,8 +12,60 @@ enum Role {
   ADMIN
 }
 
+enum Difficulty {
+  beginner
+  intermediate
+  advanced
+}
+
+model User {
+  id        String    @id @default(cuid())
+  email     String?   @unique
+  username  String?   @unique
+  name      String?
+  image     String?
+  role      Role      @default(USER)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  accounts  Account[]
+  sessions  Session[]
+  analyses  Analysis[]
+
+  @@index([email])
+  @@index([username])
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  provider          String
+  providerAccountId String
+  user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+}
+
+model Session {
+  id             String    @id @default(cuid())
+  userId         String
+  tokenHash      String
+  expiresAt      DateTime
+  revokedAt      DateTime?
+  lastUsedAt     DateTime
+  ipAddress      String?
+  userAgent      String?
+  rotatedFromId  String?
+  user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([tokenHash])
+}
+
 model Analysis {
   id           String   @id @default(cuid())
+  userId       String
   code         String
   language     String
   complexity   String?
@@ -22,71 +74,58 @@ model Analysis {
   result       Json
   shareId      String?  @unique
   isPublic     Boolean  @default(false)
-
   createdAt    DateTime @default(now())
-
-  userId       String
   user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  @@index([userId])
-  @@index([createdAt])
-  @@index([userId, createdAt, id])
-  @@map("analyses")
+  @@index([userId, createdAt])
+  @@index([shareId])
 }
 
-model User {
-  id        String   @id @default(cuid())
-  email     String?  @unique
-  username  String?  @unique
-  role      Role     @default(USER)
-  name      String?
-  image     String?
+model Category {
+  id          String      @id
+  label       String
+  description String?
+  iconName    String?
+  sortOrder   Int         @default(0)
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+  algorithms  Algorithm[]
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  accounts  Account[]
-  sessions  Session[]
-  analyses  Analysis[]
-
-  @@map("users")
+  @@index([sortOrder])
 }
 
-model Account {
-  id                 String @id @default(cuid())
-  provider           String
-  providerAccountId  String
-  userId             String
+model Algorithm {
+  id              String     @id @default(uuid())
+  slug            String     @unique
+  name            String
+  description     String
+  categoryId      String
+  forgeCode       Json
+  inputSchema     Json
+  guardRanges     Json
+  timeComplexity  String?
+  spaceComplexity String?
+  difficulty      Difficulty @default(beginner)
+  tags            String[]   @default([])
+  isPublished     Boolean    @default(false)
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+  category        Category   @relation(fields: [categoryId], references: [id])
+  snapshots       Snapshot[]
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@unique([provider, providerAccountId])
-  @@index([userId])
-  @@map("accounts")
+  @@index([categoryId])
+  @@index([slug])
+  @@index([isPublished])
 }
 
-model Session {
-  id            String    @id @default(cuid())
-  tokenHash     String
-  ipAddress     String?
-  userAgent     String?
-  lastUsedAt    DateTime?
-  expiresAt     DateTime
-  revokedAt     DateTime?
-  rotatedFromId String?
+model Snapshot {
+  id              String    @id @default(uuid())
+  algorithmId     String
+  input           Json
+  steps           Json
+  executionTimeMs Int
+  createdAt       DateTime  @default(now())
+  algorithm       Algorithm @relation(fields: [algorithmId], references: [id], onDelete: Cascade)
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  userId String
-  user   User @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@index([userId])
-  @@index([expiresAt])
-  @@index([revokedAt])
-  @@index([rotatedFromId])
-  @@map("sessions")
+  @@index([algorithmId, createdAt])
 }

@@ -7,6 +7,9 @@ import { securityHeaders } from "./middleware/security-headers";
 import analysisRouter from "./routes/analysis";
 import authRouter from "./routes/auth";
 import shareRouter from "./routes/share";
+import categoryRouter from "./routes/category";
+import algorithmRouter from "./routes/algorithm";
+import snapshotRouter from "./routes/snapshot";
 
 const app = express();
 
@@ -17,9 +20,9 @@ app.use(
   cors({
     origin: env.webAppUrl,
     credentials: true,
-    methods: ["GET", "POST", "OPTIONS"],
+    methods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "X-CSRF-Token"],
-  }),
+  })
 );
 app.use(express.json({ limit: "256kb" }));
 
@@ -31,6 +34,9 @@ app.use("/api/auth", authRouter);
 app.use("/api/analysis", analysisRouter);
 app.use("/api/analyses", analysisRouter);
 app.use("/api/share", shareRouter);
+app.use("/api/categories", categoryRouter);
+app.use("/api/algorithms", algorithmRouter);
+app.use("/api/snapshots", snapshotRouter);
 
 app.use(notFoundHandler);
 app.use(errorHandler);

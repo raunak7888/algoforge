@@ -14,6 +14,7 @@ export const prisma =
                 : ["error"],
     });
 
+// Test: prisma.snapshot.findMany()
 if (process.env.NODE_ENV !== "production") {
     globalForPrisma.prisma = prisma;
 }
