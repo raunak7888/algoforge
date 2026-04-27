@@ -1,0 +1,5581 @@
+------------------------------------------------
+FILE: ./apps/api/src/app.ts
+------------------------------------------------
+import cors from "cors";
+import express from "express";
+import { env } from "./config/env";
+import { errorHandler } from "./middleware/error-handler";
+import { notFoundHandler } from "./middleware/not-found";
+import { securityHeaders } from "./middleware/security-headers";
+import analysisRouter from "./routes/analysis";
+import authRouter from "./routes/auth";
+import shareRouter from "./routes/share";
+import categoryRouter from "./routes/category";
+import algorithmRouter from "./routes/algorithm";
+import snapshotRouter from "./routes/snapshot";
+
+const app = express();
+
+app.set("trust proxy", 1);
+
+app.use(securityHeaders);
+app.use(
+  cors({
+    origin: env.webAppUrl,
+    credentials: true,
+    methods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "X-CSRF-Token"],
+  })
+);
+app.use(express.json({ limit: "256kb" }));
+
+app.get("/health", (_req, res) => {
+  res.json({ status: "ok", timestamp: new Date().toISOString() });
+});
+
+app.use("/api/auth", authRouter);
+app.use("/api/analysis", analysisRouter);
+app.use("/api/analyses", analysisRouter);
+app.use("/api/share", shareRouter);
+app.use("/api/categories", categoryRouter);
+app.use("/api/algorithms", algorithmRouter);
+app.use("/api/snapshots", snapshotRouter);
+
+app.use(notFoundHandler);
+app.use(errorHandler);
+
+export { app };
+
+------------------------------------------------
+FILE: ./apps/api/src/config/env.ts
+------------------------------------------------
+import dotenv from "dotenv";
+
+dotenv.config();
+
+function requireEnv(name: string): string {
+  const value = process.env[name];
+
+  if (!value) {
+    throw new Error(`Missing required environment variable: ${name}`);
+  }
+
+  return value;
+}
+
+function parseInteger(name: string, fallback: number): number {
+  const rawValue = process.env[name];
+
+  if (!rawValue) {
+    return fallback;
+  }
+
+  const parsed = Number(rawValue);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    throw new Error(`Environment variable ${name} must be a positive integer.`);
+  }
+
+  return parsed;
+}
+
+function parseStringEnum<T extends string>(
+  name: string,
+  allowedValues: readonly T[],
+  fallback: T,
+): T {
+  const rawValue = process.env[name];
+
+  if (!rawValue) {
+    return fallback;
+  }
+
+  if (!allowedValues.includes(rawValue as T)) {
+    throw new Error(
+      `Environment variable ${name} must be one of: ${allowedValues.join(", ")}.`,
+    );
+  }
+
+  return rawValue as T;
+}
+
+function parseList(name: string): string[] {
+  const rawValue = process.env[name];
+
+  if (!rawValue) {
+    return [];
+  }
+
+  return rawValue
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+}
+
+const port = parseInteger("PORT", 4000);
+const nodeEnv = process.env.NODE_ENV ?? "development";
+const isProduction = nodeEnv === "production";
+const apiBaseUrl = process.env.API_BASE_URL ?? `http://localhost:${port}`;
+
+export const env = {
+  nodeEnv,
+  isProduction,
+  port,
+  apiBaseUrl,
+  webAppUrl: process.env.WEB_APP_URL ?? "http://localhost:3000",
+  cookieDomain: process.env.COOKIE_DOMAIN,
+  googleClientId: requireEnv("GOOGLE_CLIENT_ID"),
+  googleClientSecret: requireEnv("GOOGLE_CLIENT_SECRET"),
+  jwtAccessSecret: requireEnv("JWT_ACCESS_SECRET"),
+  jwtRefreshSecret: requireEnv("JWT_REFRESH_SECRET"),
+  accessTokenTtlMinutes: parseInteger("ACCESS_TOKEN_TTL_MINUTES", 15),
+  refreshTokenTtlDays: parseInteger("REFRESH_TOKEN_TTL_DAYS", 30),
+  authIssuer: process.env.AUTH_ISSUER ?? "algoforge-api",
+  authAudience: process.env.AUTH_AUDIENCE ?? "algoforge-web",
+  geminiApiKey: requireEnv("GEMINI_API_KEY"),
+  ai: {
+    provider: parseStringEnum("AI_PROVIDER", ["gemini"], "gemini"),
+    model: process.env.AI_MODEL ?? "gemini-2.0-flash",
+    timeoutMs: parseInteger("AI_TIMEOUT_MS", 15000),
+    maxRetries: parseInteger("AI_MAX_RETRIES", 1),
+  },
+  openRouter: {
+    baseUrl: process.env.OPENROUTER_BASE_URL ?? "https://openrouter.ai/api/v1",
+    apiKeys: parseList("OPENROUTER_API_KEYS"),
+    freeModels: parseList("OPENROUTER_FREE_MODELS"),
+    appName: process.env.OPENROUTER_APP_NAME ?? "AlgoForge",
+    siteUrl: process.env.OPENROUTER_SITE_URL ?? process.env.WEB_APP_URL,
+  },
+};
+
+export const authCookies = {
+  accessToken: "af_access",
+  refreshToken: "af_refresh",
+  csrfToken: "af_csrf",
+  oauthState: "af_oauth_state",
+} as const;
+
+export const googleOAuthConfig = {
+  redirectUri: `${apiBaseUrl}/api/auth/google/callback`,
+  scopes: ["openid", "email", "profile"],
+};
+
+
+------------------------------------------------
+FILE: ./apps/api/src/controllers/algorithm.controller.ts
+------------------------------------------------
+import { Request, Response } from "express";
+import { algorithmService } from "../services/algorithm.service";
+import { asyncHandler } from "../utils/async-handler";
+import { ensureString } from "../validation/common";
+import {
+  parseCreateAlgorithm,
+  parseUpdateAlgorithm,
+  parseAlgorithmQuery,
+} from "../validation/algorithm";
+
+class AlgorithmController {
+  list = asyncHandler(async (req: Request, res: Response) => {
+    const query = parseAlgorithmQuery(req.query);
+    const algorithms = await algorithmService.listAlgorithms(query);
+    res.json(algorithms);
+  });
+
+  getById = asyncHandler(async (req: Request, res: Response) => {
+    const id = ensureString(req.params.id, "Algorithm ID is required.");
+    const algorithm = await algorithmService.getAlgorithmById(id);
+    res.json(algorithm);
+  });
+
+  getBySlug = asyncHandler(async (req: Request, res: Response) => {
+    const slug = ensureString(req.params.slug, "Algorithm slug is required.");
+    const algorithm = await algorithmService.getAlgorithmBySlug(slug);
+    res.json(algorithm);
+  });
+
+  create = asyncHandler(async (req: Request, res: Response) => {
+    const input = parseCreateAlgorithm(req.body);
+    const algorithm = await algorithmService.createAlgorithm(input);
+    res.status(201).json(algorithm);
+  });
+
+  update = asyncHandler(async (req: Request, res: Response) => {
+    const id = ensureString(req.params.id, "Algorithm ID is required.");
+    const input = parseUpdateAlgorithm(req.body);
+    const algorithm = await algorithmService.updateAlgorithm(id, input);
+    res.json(algorithm);
+  });
+
+  delete = asyncHandler(async (req: Request, res: Response) => {
+    const id = ensureString(req.params.id, "Algorithm ID is required.");
+    await algorithmService.deleteAlgorithm(id);
+    res.status(204).send();
+  });
+}
+
+export const algorithmController = new AlgorithmController();
+
+------------------------------------------------
+FILE: ./apps/api/src/controllers/analysis.controller.ts
+------------------------------------------------
+import { Request, Response } from "express";
+import { analysisService } from "../services/analysis.service";
+import { asyncHandler } from "../utils/async-handler";
+import { ensureString } from "../validation/common";
+import { parseAnalysisHistoryQuery, parseAnalysisInput } from "../validation/analysis";
+
+class AnalysisController {
+  createAnalysis = asyncHandler(async (req: Request, res: Response) => {
+    const input = parseAnalysisInput(req.body);
+    const analysis = await analysisService.createAnalysis(req.auth!.user.id, input);
+
+    res.status(201).json(analysis);
+  });
+
+  listAnalyses = asyncHandler(async (req: Request, res: Response) => {
+    const query = parseAnalysisHistoryQuery(req.query);
+    const analyses = await analysisService.listUserAnalyses(req.auth!.user.id, query);
+    res.json(analyses);
+  });
+
+  getAnalysisById = asyncHandler(async (req: Request, res: Response) => {
+    const analysisId = ensureString(req.params.id, "Analysis id is required.");
+    const analysis = await analysisService.getUserAnalysisById(req.auth!.user.id, analysisId);
+    res.json(analysis);
+  });
+
+  shareAnalysis = asyncHandler(async (req: Request, res: Response) => {
+    const analysisId = ensureString(req.params.id, "Analysis id is required.");
+    const result = await analysisService.shareAnalysis(req.auth!.user.id, analysisId);
+    res.json(result);
+  });
+
+  getPublicAnalysis = asyncHandler(async (req: Request, res: Response) => {
+    const shareId = ensureString(req.params.shareId, "Share id is required.");
+    const result = await analysisService.getPublicAnalysis(shareId);
+    res.json(result);
+  });
+}
+
+export const analysisController = new AnalysisController();
+
+
+------------------------------------------------
+FILE: ./apps/api/src/controllers/auth.controller.ts
+------------------------------------------------
+import { Request, Response } from "express";
+import { prisma } from "@algoforge/db";
+import { authCookies, env } from "../config/env";
+import { authService } from "../services/auth.service";
+import { userService } from "../services/user.service";
+import { AppError } from "../utils/app-error";
+import { asyncHandler } from "../utils/async-handler";
+import {
+  clearAuthCookies,
+  clearOAuthStateCookie,
+  getCookie,
+  setAuthCookies,
+  setOAuthStateCookie,
+} from "../utils/cookies";
+import { getToken } from "../middleware/auth";
+import { ensureString } from "../validation/common";
+
+class AuthController {
+  startGoogleAuth = asyncHandler(async (_req: Request, res: Response) => {
+    const { url, state } = authService.buildGoogleAuthorizationUrl();
+    setOAuthStateCookie(res, state);
+    res.redirect(url);
+  });
+
+  handleGoogleCallback = asyncHandler(async (req: Request, res: Response) => {
+    try {
+      const state = ensureString(req.query.state, "OAuth state is missing.");
+      const code = ensureString(req.query.code, "Authorization code is missing.");
+      const expectedState = getCookie(req, authCookies.oauthState);
+
+      clearOAuthStateCookie(res);
+
+      if (!expectedState || expectedState !== state) {
+        throw AppError.unauthorized("Invalid OAuth state.");
+      }
+
+      const authResult = await authService.authenticateGoogleCallback(code, {
+        ipAddress: req.ip ?? null,
+        userAgent: req.get("user-agent") ?? null,
+      });
+
+      setAuthCookies(res, authResult);
+      res.redirect(`${env.webAppUrl}/`);
+    } catch (error) {
+      clearOAuthStateCookie(res);
+      clearAuthCookies(res);
+      console.error("[OAuth Callback Error]", error);
+      res.redirect(`${env.webAppUrl}/?authError=oauth_failed`);
+    }
+  });
+
+  getSession = asyncHandler(async (req: Request, res: Response) => {
+    res.json({ user: req.auth!.user });
+  });
+
+  refreshSession = asyncHandler(async (req: Request, res: Response) => {
+    const refreshToken = getCookie(req, authCookies.refreshToken);
+
+    if (!refreshToken) {
+      clearAuthCookies(res);
+      throw AppError.unauthorized("Refresh token is missing.");
+    }
+
+    const authResult = await authService.rotateRefreshToken(refreshToken, {
+      ipAddress: req.ip ?? null,
+      userAgent: req.get("user-agent") ?? null,
+    });
+
+    setAuthCookies(res, authResult);
+    res.json({ user: authResult.user });
+  });
+
+  logout = asyncHandler(async (req: Request, res: Response) => {
+    const refreshToken = getCookie(req, authCookies.refreshToken);
+
+    if (refreshToken) {
+      await authService.revokeSessionByRefreshToken(refreshToken);
+    }
+
+    clearAuthCookies(res);
+    res.status(204).send();
+  });
+
+  logoutAll = asyncHandler(async (req: Request, res: Response) => {
+    await authService.revokeAllUserSessions(req.auth!.user.id);
+    clearAuthCookies(res);
+    res.status(204).send();
+  });
+
+  listUsers = asyncHandler(async (_req: Request, res: Response) => {
+    const users = await prisma.user.findMany({
+      orderBy: { createdAt: "desc" },
+      select: {
+        id: true,
+        email: true,
+        name: true,
+        role: true,
+        createdAt: true,
+      },
+    });
+
+    res.json({ users });
+  });
+
+  getMe = asyncHandler(async (req: Request, res: Response) => {
+    const accessToken = getToken(req);
+    
+    if (!accessToken) {
+      res.json({ user: null });
+      return;
+    }
+
+    const user = await userService.getUserByToken(accessToken);
+    res.json({ user });
+  });
+}
+
+export const authController = new AuthController();
+
+
+------------------------------------------------
+FILE: ./apps/api/src/controllers/category.controller.ts
+------------------------------------------------
+import { Request, Response } from "express";
+import { categoryService } from "../services/category.service";
+import { asyncHandler } from "../utils/async-handler";
+import { ensureString } from "../validation/common";
+import {
+  parseCreateCategory,
+  parseUpdateCategory,
+} from "../validation/category";
+
+class CategoryController {
+  list = asyncHandler(async (_req: Request, res: Response) => {
+    const categories = await categoryService.listCategories();
+    res.json(categories);
+  });
+
+  getById = asyncHandler(async (req: Request, res: Response) => {
+    const id = ensureString(req.params.id, "Category ID is required.");
+    const category = await categoryService.getCategoryById(id);
+    res.json(category);
+  });
+
+  create = asyncHandler(async (req: Request, res: Response) => {
+    const input = parseCreateCategory(req.body);
+    const category = await categoryService.createCategory(input);
+    res.status(201).json(category);
+  });
+
+  update = asyncHandler(async (req: Request, res: Response) => {
+    const id = ensureString(req.params.id, "Category ID is required.");
+    const input = parseUpdateCategory(req.body);
+    const category = await categoryService.updateCategory(id, input);
+    res.json(category);
+  });
+
+  delete = asyncHandler(async (req: Request, res: Response) => {
+    const id = ensureString(req.params.id, "Category ID is required.");
+    await categoryService.deleteCategory(id);
+    res.status(204).send();
+  });
+}
+
+export const categoryController = new CategoryController();
+
+------------------------------------------------
+FILE: ./apps/api/src/controllers/snapshot.controller.ts
+------------------------------------------------
+import { Request, Response } from "express";
+import { snapshotService } from "../services/snapshot.service";
+import { asyncHandler } from "../utils/async-handler";
+import { ensureString } from "../validation/common";
+import { parseCreateSnapshot } from "../validation/snapshot";
+
+class SnapshotController {
+  create = asyncHandler(async (req: Request, res: Response) => {
+    const input = parseCreateSnapshot(req.body);
+    const snapshot = await snapshotService.createSnapshot(input);
+    res.status(201).json(snapshot);
+  });
+
+  getById = asyncHandler(async (req: Request, res: Response) => {
+    const id = ensureString(req.params.id, "Snapshot ID is required.");
+    const snapshot = await snapshotService.getSnapshotById(id);
+    res.json(snapshot);
+  });
+
+  listByAlgorithm = asyncHandler(async (req: Request, res: Response) => {
+    const algorithmId = ensureString(
+      req.params.algorithmId,
+      "Algorithm ID is required."
+    );
+    const snapshots = await snapshotService.listSnapshotsByAlgorithm(
+      algorithmId
+    );
+    res.json(snapshots);
+  });
+
+  delete = asyncHandler(async (req: Request, res: Response) => {
+    const id = ensureString(req.params.id, "Snapshot ID is required.");
+    await snapshotService.deleteSnapshot(id);
+    res.status(204).send();
+  });
+}
+
+export const snapshotController = new SnapshotController();
+
+------------------------------------------------
+FILE: ./apps/api/src/middleware/auth.ts
+------------------------------------------------
+import { NextFunction, Request, Response } from "express";
+import { Role } from "@algoforge/db";
+import { authCookies } from "../config/env";
+import { authService } from "../services/auth.service";
+import { AppError } from "../utils/app-error";
+import { getCookie } from "../utils/cookies";
+
+export function getToken(req: Request): string | null {
+  const cookieToken = getCookie(req, authCookies.accessToken);
+  if (cookieToken) return cookieToken;
+
+  const authHeader = req.headers.authorization;
+  if (authHeader?.startsWith("Bearer ")) {
+    return authHeader.split(" ")[1];
+  }
+
+  return null;
+}
+
+export async function requireAuth(
+  req: Request,
+  _res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    const accessToken = getToken(req);
+
+    if (!accessToken) {
+      return next(AppError.unauthorized("Authentication required."));
+    }
+
+    req.auth = await authService.authenticateAccessToken(accessToken);
+    next();
+  } catch (error) {
+    next(error);
+  }
+}
+
+export function requireRoles(...roles: Role[]) {
+  return (req: Request, _res: Response, next: NextFunction): void => {
+    if (!req.auth) {
+      return next(AppError.unauthorized("Authentication required."));
+    }
+
+    if (!roles.includes(req.auth.user.role)) {
+      return next(AppError.forbidden("Insufficient permissions."));
+    }
+
+    next();
+  };
+}
+
+
+------------------------------------------------
+FILE: ./apps/api/src/middleware/csrf.ts
+------------------------------------------------
+import { NextFunction, Request, Response } from "express";
+import { authCookies } from "../config/env";
+import { AppError } from "../utils/app-error";
+import { getCookie } from "../utils/cookies";
+
+export function requireCsrf(
+  req: Request,
+  _res: Response,
+  next: NextFunction,
+): void {
+  const csrfCookie = getCookie(req, authCookies.csrfToken);
+  const csrfHeader = req.get("x-csrf-token");
+
+  if (!csrfCookie || !csrfHeader || csrfCookie !== csrfHeader) {
+    return next(AppError.forbidden("CSRF validation failed."));
+  }
+
+  next();
+}
+
+
+------------------------------------------------
+FILE: ./apps/api/src/middleware/error-handler.ts
+------------------------------------------------
+import { NextFunction, Request, Response } from "express";
+import { JsonWebTokenError, TokenExpiredError } from "jsonwebtoken";
+import { AppError } from "../utils/app-error";
+
+export function errorHandler(
+  error: unknown,
+  _req: Request,
+  res: Response,
+  _next: NextFunction,
+): void {
+  if (error instanceof AppError) {
+    res.status(error.statusCode).json({
+      error: error.message,
+      code: error.code,
+    });
+    return;
+  }
+
+  if (error instanceof TokenExpiredError || error instanceof JsonWebTokenError) {
+    res.status(401).json({
+      error: "Authentication failed.",
+      code: "AUTH_INVALID",
+    });
+    return;
+  }
+
+  console.error("[Unhandled Error]", error);
+  res.status(500).json({
+    error: "Internal server error.",
+    code: "INTERNAL_ERROR",
+  });
+}
+
+
+------------------------------------------------
+FILE: ./apps/api/src/middleware/not-found.ts
+------------------------------------------------
+import { Request, Response } from "express";
+
+export function notFoundHandler(_req: Request, res: Response): void {
+  res.status(404).json({
+    error: "Route not found.",
+    code: "NOT_FOUND",
+  });
+}
+
+
+------------------------------------------------
+FILE: ./apps/api/src/middleware/security-headers.ts
+------------------------------------------------
+import { NextFunction, Request, Response } from "express";
+
+export function securityHeaders(
+  _req: Request,
+  res: Response,
+  next: NextFunction,
+): void {
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("X-Frame-Options", "DENY");
+  res.setHeader("Referrer-Policy", "no-referrer");
+  res.setHeader("Cross-Origin-Opener-Policy", "same-origin");
+  res.setHeader("Cross-Origin-Resource-Policy", "same-site");
+  res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+  next();
+}
+
+
+------------------------------------------------
+FILE: ./apps/api/src/prompts/analysis.prompt.ts
+------------------------------------------------
+import type { AnalysisLanguage } from "@algoforge/analysis";
+
+const LANGUAGE_LABELS: Record<AnalysisLanguage, string> = {
+    javascript: "JavaScript",
+    python: "Python",
+};
+
+export function buildAnalysisPrompt(input: {
+    code: string;
+    language: AnalysisLanguage;
+}): string {
+    const languageLabel = LANGUAGE_LABELS[input.language];
+
+    return `
+You are a strict JSON generator.
+
+Return ONLY valid JSON. No markdown, no explanation, no extra text.
+
+Schema:
+{
+  "summary": string,
+  "complexity": {
+    "time": { "best": string, "average": string, "worst": string },
+    "space": string
+  },
+  "breakdown": {
+    "approach": string,
+    "steps": string[]
+  },
+  "bottlenecks": [
+    { "issue": string, "impact": string, "location": string }
+  ],
+  "antiPatterns": string[],
+  "improvements": [
+    { "suggestion": string, "expectedImpact": string }
+  ],
+  "optimizedCode": string,
+  "comparison": {
+    "originalVsOptimized": string,
+    "improvementSummary": string
+  },
+  "edgeCases": string[],
+  "readabilityScore": number,
+  "tags": string[]
+}
+
+Rules:
+- All fields required
+- Use [] if empty
+- Keep optimizedCode in ${languageLabel}
+- No extra keys
+
+Code:
+${input.code}
+`;
+}
+
+
+------------------------------------------------
+FILE: ./apps/api/src/routes/algorithm.ts
+------------------------------------------------
+import { Router } from "express";
+import { Role } from "@algoforge/db";
+import { algorithmController } from "../controllers/algorithm.controller";
+import { requireAuth, requireRoles } from "../middleware/auth";
+import { requireCsrf } from "../middleware/csrf";
+
+const router = Router();
+
+router.get("/", algorithmController.list);
+router.get("/:id", algorithmController.getById);
+router.get("/slug/:slug", algorithmController.getBySlug);
+router.post(
+  "/",
+  requireAuth,
+  requireRoles(Role.ADMIN),
+  requireCsrf,
+  algorithmController.create
+);
+router.patch(
+  "/:id",
+  requireAuth,
+  requireRoles(Role.ADMIN),
+  requireCsrf,
+  algorithmController.update
+);
+router.delete(
+  "/:id",
+  requireAuth,
+  requireRoles(Role.ADMIN),
+  requireCsrf,
+  algorithmController.delete
+);
+
+export default router;
+
+------------------------------------------------
+FILE: ./apps/api/src/routes/analysis.ts
+------------------------------------------------
+import { Router } from "express";
+import { analysisController } from "../controllers/analysis.controller";
+import { requireAuth } from "../middleware/auth";
+import { requireCsrf } from "../middleware/csrf";
+
+const router = Router();
+
+router.get("/", requireAuth, analysisController.listAnalyses);
+router.get("/:id", requireAuth, analysisController.getAnalysisById);
+router.post("/", requireAuth, requireCsrf, analysisController.createAnalysis);
+router.post("/:id/share", requireAuth, requireCsrf, analysisController.shareAnalysis);
+
+export default router;
+
+
+------------------------------------------------
+FILE: ./apps/api/src/routes/auth.ts
+------------------------------------------------
+import { Router } from "express";
+import { Role } from "@algoforge/db";
+import { authController } from "../controllers/auth.controller";
+import { requireAuth, requireRoles } from "../middleware/auth";
+import { requireCsrf } from "../middleware/csrf";
+
+const router = Router();
+
+router.get("/google/start", authController.startGoogleAuth);
+router.get("/google/callback", authController.handleGoogleCallback);
+router.get("/me", authController.getMe);
+router.get("/session", requireAuth, authController.getSession);
+router.post("/refresh", requireCsrf, authController.refreshSession);
+router.post("/logout", requireCsrf, authController.logout);
+router.post("/logout-all", requireAuth, requireCsrf, authController.logoutAll);
+router.get("/admin/users", requireAuth, requireRoles(Role.ADMIN), authController.listUsers);
+
+export default router;
+
+
+------------------------------------------------
+FILE: ./apps/api/src/routes/category.ts
+------------------------------------------------
+import { Router } from "express";
+import { Role } from "@algoforge/db";
+import { categoryController } from "../controllers/category.controller";
+import { requireAuth, requireRoles } from "../middleware/auth";
+import { requireCsrf } from "../middleware/csrf";
+
+const router = Router();
+
+router.get("/", categoryController.list);
+router.get("/:id", categoryController.getById);
+router.post(
+  "/",
+  requireAuth,
+  requireRoles(Role.ADMIN),
+  requireCsrf,
+  categoryController.create
+);
+router.patch(
+  "/:id",
+  requireAuth,
+  requireRoles(Role.ADMIN),
+  requireCsrf,
+  categoryController.update
+);
+router.delete(
+  "/:id",
+  requireAuth,
+  requireRoles(Role.ADMIN),
+  requireCsrf,
+  categoryController.delete
+);
+
+export default router;
+
+------------------------------------------------
+FILE: ./apps/api/src/routes/share.ts
+------------------------------------------------
+import { Router } from "express";
+import { analysisController } from "../controllers/analysis.controller";
+
+const router = Router();
+
+router.get("/:shareId", analysisController.getPublicAnalysis);
+
+export default router;
+
+------------------------------------------------
+FILE: ./apps/api/src/routes/snapshot.ts
+------------------------------------------------
+import { Router } from "express";
+import { snapshotController } from "../controllers/snapshot.controller";
+import { requireAuth } from "../middleware/auth";
+import { requireCsrf } from "../middleware/csrf";
+
+const router = Router();
+
+router.post("/", requireAuth, requireCsrf, snapshotController.create);
+router.get("/:id", snapshotController.getById);
+router.get("/algorithm/:algorithmId", snapshotController.listByAlgorithm);
+router.delete("/:id", requireAuth, requireCsrf, snapshotController.delete);
+
+export default router;
+
+------------------------------------------------
+FILE: ./apps/api/src/server.ts
+------------------------------------------------
+import { app } from "./app";
+import { env } from "./config/env";
+
+app.listen(env.port, () => {
+  if (!env.isProduction) {
+    console.log(`[API] Server running at ${env.apiBaseUrl}`);
+    console.log(`[API] Health check: ${env.apiBaseUrl}/health`);
+  }
+});
+
+
+------------------------------------------------
+FILE: ./apps/api/src/services/ai.service.ts
+------------------------------------------------
+import { AnalysisResultSchema, type AnalysisLanguage, type AnalysisResult } from "@algoforge/analysis";
+import { env } from "../config/env";
+import { buildAnalysisPrompt } from "../prompts/analysis.prompt";
+import { AppError } from "../utils/app-error";
+import type { AIMessage } from "./providers/ai-provider";
+import type { AIProvider } from "./providers/ai-provider";
+import { GeminiProvider } from "./providers/gemini.provider";
+
+type AnalyzeCodeInput = {
+  code: string;
+  language: AnalysisLanguage;
+};
+
+class AIService {
+  constructor(private readonly provider: AIProvider) {}
+
+  async analyzeCode(input: AnalyzeCodeInput): Promise<AnalysisResult> {
+    const prompt = buildAnalysisPrompt(input);
+    const messages: AIMessage[] = [
+      {
+        role: "user",
+        content: prompt,
+      },
+    ];
+    this.logInfo(`Using provider "${this.provider.name}" for analysis.`);
+
+    try {
+      const response = await this.withTimeout(
+        this.provider.generate({ messages }),
+        env.ai.timeoutMs,
+      );
+      const sanitizedResponse = sanitizeAiJson(response.message.content);
+      const parsedResponse = JSON.parse(sanitizedResponse) as unknown;
+
+      this.logInfo(
+        `Provider "${this.provider.name}" succeeded with model "${response.model}".`,
+      );
+
+      return AnalysisResultSchema.parse(parsedResponse);
+    } catch (error) {
+      this.logError(`Provider "${this.provider.name}" failed.`, error);
+      throw this.normalizeError(error);
+    }
+  }
+
+  private async withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+    let timeoutId: NodeJS.Timeout | undefined;
+
+    try {
+      return await Promise.race([
+        promise,
+        new Promise<T>((_, reject) => {
+          timeoutId = setTimeout(() => {
+            reject(AppError.badGateway("AI provider request timed out."));
+          }, timeoutMs);
+        }),
+      ]);
+    } finally {
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
+    }
+  }
+
+  private normalizeError(error: unknown): AppError {
+    if (error instanceof AppError) {
+      return error;
+    }
+
+    if (error instanceof SyntaxError) {
+      return AppError.badGateway("AI provider returned invalid JSON.");
+    }
+
+    if (
+      error instanceof Error &&
+      "issues" in error &&
+      Array.isArray((error as { issues?: unknown[] }).issues)
+    ) {
+      return AppError.badGateway("AI provider returned an invalid analysis payload.");
+    }
+
+    return AppError.badGateway("AI analysis failed.");
+  }
+
+  private logInfo(message: string): void {
+    if (!env.isProduction) {
+      console.info(`[AI] ${message}`);
+    }
+  }
+
+  private logError(message: string, error: unknown): void {
+    if (!env.isProduction) {
+      console.error(`[AI] ${message}`, error);
+    }
+  }
+}
+
+function sanitizeAiJson(value: string): string {
+  const trimmed = value.trim();
+  const fencedMatch = trimmed.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+
+  if (fencedMatch?.[1]) {
+    return fencedMatch[1].trim();
+  }
+
+  const startIndex = trimmed.indexOf("{");
+  const endIndex = trimmed.lastIndexOf("}");
+
+  if (startIndex >= 0 && endIndex > startIndex) {
+    return trimmed.slice(startIndex, endIndex + 1).trim();
+  }
+
+  return trimmed;
+}
+
+function createGeminiProvider(): AIProvider {
+  return new GeminiProvider({
+    apiKey: env.geminiApiKey,
+    model: env.ai.model,
+  });
+}
+
+export const aiService = new AIService(createGeminiProvider());
+
+
+------------------------------------------------
+FILE: ./apps/api/src/services/algorithm.service.ts
+------------------------------------------------
+import { prisma } from "@algoforge/db";
+import {
+  AlgorithmResponseSchema,
+  type CreateAlgorithm,
+  type UpdateAlgorithm,
+  type AlgorithmResponse,
+} from "@algoforge/forge";
+import { AppError } from "../utils/app-error";
+
+export type AlgorithmQuery = {
+  categoryId?: string;
+  difficulty?: string;
+  isPublished?: boolean;
+  search?: string;
+};
+
+function serializeAlgorithm(algorithm: {
+  id: string;
+  slug: string;
+  name: string;
+  description: string;
+  categoryId: string;
+  forgeCode: unknown;
+  inputSchema: unknown;
+  guardRanges: unknown;
+  timeComplexity: string | null;
+  spaceComplexity: string | null;
+  difficulty: string;
+  tags: string[];
+  isPublished: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+}): AlgorithmResponse {
+  return AlgorithmResponseSchema.parse({
+    id: algorithm.id,
+    slug: algorithm.slug,
+    name: algorithm.name,
+    description: algorithm.description,
+    categoryId: algorithm.categoryId,
+    forgeCode: algorithm.forgeCode,
+    inputSchema: algorithm.inputSchema,
+    guardRanges: algorithm.guardRanges,
+    timeComplexity: algorithm.timeComplexity,
+    spaceComplexity: algorithm.spaceComplexity,
+    difficulty: algorithm.difficulty,
+    tags: algorithm.tags,
+    isPublished: algorithm.isPublished,
+    createdAt: algorithm.createdAt.toISOString(),
+    updatedAt: algorithm.updatedAt.toISOString(),
+  });
+}
+
+class AlgorithmService {
+  async listAlgorithms(query: AlgorithmQuery): Promise<AlgorithmResponse[]> {
+    const where: any = {};
+
+    if (query.categoryId) {
+      where.categoryId = query.categoryId;
+    }
+
+    if (query.difficulty) {
+      where.difficulty = query.difficulty;
+    }
+
+    if (typeof query.isPublished === "boolean") {
+      where.isPublished = query.isPublished;
+    }
+
+    if (query.search) {
+      where.OR = [
+        { name: { contains: query.search, mode: "insensitive" } },
+        { description: { contains: query.search, mode: "insensitive" } },
+        { tags: { has: query.search } },
+      ];
+    }
+
+    const algorithms = await prisma.algorithm.findMany({
+      where,
+      orderBy: { createdAt: "desc" },
+    });
+
+    return algorithms.map(serializeAlgorithm);
+  }
+
+  async getAlgorithmById(id: string): Promise<AlgorithmResponse> {
+    const algorithm = await prisma.algorithm.findUnique({
+      where: { id },
+    });
+
+    if (!algorithm) {
+      throw AppError.notFound("Algorithm not found.");
+    }
+
+    return serializeAlgorithm(algorithm);
+  }
+
+  async getAlgorithmBySlug(slug: string): Promise<AlgorithmResponse> {
+    const algorithm = await prisma.algorithm.findUnique({
+      where: { slug },
+    });
+
+    if (!algorithm) {
+      throw AppError.notFound("Algorithm not found.");
+    }
+
+    return serializeAlgorithm(algorithm);
+  }
+
+  async createAlgorithm(input: CreateAlgorithm): Promise<AlgorithmResponse> {
+    const existing = await prisma.algorithm.findUnique({
+      where: { slug: input.slug },
+    });
+
+    if (existing) {
+      throw AppError.badRequest("Algorithm with this slug already exists.");
+    }
+
+    const algorithm = await prisma.algorithm.create({
+      data: input as any,
+    });
+
+    return serializeAlgorithm(algorithm);
+  }
+
+  async updateAlgorithm(
+    id: string,
+    input: UpdateAlgorithm
+  ): Promise<AlgorithmResponse> {
+    const algorithm = await prisma.algorithm.update({
+      where: { id },
+      data: input as any,
+    });
+
+    return serializeAlgorithm(algorithm);
+  }
+
+  async deleteAlgorithm(id: string): Promise<void> {
+    await prisma.algorithm.delete({
+      where: { id },
+    });
+  }
+}
+
+export const algorithmService = new AlgorithmService();
+
+
+------------------------------------------------
+FILE: ./apps/api/src/services/analysis.service.ts
+------------------------------------------------
+import {
+  AnalysisHistoryItemSchema,
+  AnalysisRecordSchema,
+  SharedAnalysisSchema,
+  type AnalysisHistoryResponse,
+  type CreateAnalysisInput,
+} from "@algoforge/analysis";
+import { prisma } from "@algoforge/db";
+import { aiService } from "./ai.service";
+import {
+  decodeAnalysisCursor,
+  encodeAnalysisCursor,
+  type AnalysisHistoryQuery,
+} from "../validation/analysis";
+import { AppError } from "../utils/app-error";
+import { env } from "../config/env";
+
+function serializeAnalysisRecord(analysis: {
+  id: string;
+  language: string;
+  result: unknown;
+  createdAt: Date;
+}) {
+  return AnalysisRecordSchema.parse({
+    id: analysis.id,
+    language: analysis.language,
+    result: analysis.result,
+    createdAt: analysis.createdAt.toISOString(),
+  });
+}
+
+function serializeHistoryItem(analysis: {
+  id: string;
+  language: string;
+  complexity: string | null;
+  suggestion: string | null;
+  createdAt: Date;
+}) {
+  return AnalysisHistoryItemSchema.parse({
+    id: analysis.id,
+    language: analysis.language,
+    complexity: analysis.complexity,
+    suggestion: analysis.suggestion,
+    createdAt: analysis.createdAt.toISOString(),
+  });
+}
+
+class AnalysisService {
+  async createAnalysis(userId: string, input: CreateAnalysisInput) {
+    const analysisResult = await aiService.analyzeCode(input);
+
+    const analysis = await prisma.analysis.create({
+      data: {
+        userId,
+        code: input.code,
+        language: input.language,
+        complexity: analysisResult.complexity.time.worst,
+        suggestion: analysisResult.improvements[0]?.suggestion ?? null,
+        timeEstimate: analysisResult.complexity.time.average,
+        result: analysisResult,
+      },
+      select: {
+        id: true,
+        language: true,
+        result: true,
+        createdAt: true,
+      },
+    });
+
+    return serializeAnalysisRecord(analysis);
+  }
+
+  async listUserAnalyses(
+    userId: string,
+    query: AnalysisHistoryQuery,
+  ): Promise<AnalysisHistoryResponse> {
+    const cursor = query.cursor ? decodeAnalysisCursor(query.cursor) : null;
+    const take = query.limit + 1;
+    const analyses = await prisma.analysis.findMany({
+      where: {
+        userId,
+        ...(cursor
+          ? {
+              OR: [
+                { createdAt: { lt: new Date(cursor.createdAt) } },
+                {
+                  createdAt: new Date(cursor.createdAt),
+                  id: { lt: cursor.id },
+                },
+              ],
+            }
+          : {}),
+      },
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      take,
+      select: {
+        id: true,
+        language: true,
+        complexity: true,
+        suggestion: true,
+        createdAt: true,
+      },
+    });
+
+    const hasMore = analyses.length > query.limit;
+    const page = hasMore ? analyses.slice(0, query.limit) : analyses;
+    const lastItem = page.at(-1);
+
+    return {
+      data: page.map(serializeHistoryItem),
+      meta: {
+        nextCursor: hasMore && lastItem
+          ? encodeAnalysisCursor({
+              createdAt: lastItem.createdAt.toISOString(),
+              id: lastItem.id,
+            })
+          : null,
+        hasMore,
+      },
+    };
+  }
+
+  async getUserAnalysisById(userId: string, analysisId: string) {
+    const analysis = await prisma.analysis.findFirst({
+      where: {
+        id: analysisId,
+        userId,
+      },
+      select: {
+        id: true,
+        language: true,
+        result: true,
+        createdAt: true,
+      },
+    });
+
+    if (!analysis) {
+      throw AppError.notFound("Analysis not found.");
+    }
+
+    return serializeAnalysisRecord(analysis);
+  }
+
+  async shareAnalysis(userId: string, analysisId: string) {
+    const analysis = await prisma.analysis.findFirst({
+      where: {
+        id: analysisId,
+        userId,
+      },
+    });
+
+    if (!analysis) {
+      throw AppError.notFound("Analysis not found.");
+    }
+
+    const record = analysis as any;
+    if (record.shareId && record.isPublic) {
+      return { shareUrl: `${env.webAppUrl}/share/${record.shareId}` };
+    }
+
+    const { nanoid } = await import("nanoid");
+    const shareId = nanoid(10);
+
+    await (prisma.analysis.update as any)({
+      where: { id: analysisId },
+      data: {
+        shareId,
+        isPublic: true,
+      },
+    });
+
+    return { shareUrl: `${env.webAppUrl}/share/${shareId}` };
+  }
+
+  async getPublicAnalysis(shareId: string) {
+    const analysis = await (prisma.analysis.findUnique as any)({
+      where: { shareId } as any,
+      select: {
+        id: true,
+        code: true,
+        language: true,
+        result: true,
+        createdAt: true,
+        isPublic: true,
+        user: {
+          select: {
+            id: true,
+            name: true,
+            username: true,
+            image: true,
+          },
+        },
+      },
+    });
+
+    if (!analysis) {
+      throw AppError.notFound("Analysis not found.");
+    }
+
+    if (!(analysis as any).isPublic) {
+      throw AppError.forbidden("This analysis is not public.");
+    }
+
+    return SharedAnalysisSchema.parse({
+      id: analysis.id,
+      code: analysis.code,
+      language: analysis.language,
+      result: analysis.result,
+      createdAt: analysis.createdAt.toISOString(),
+      creator: analysis.user ? {
+        id: analysis.user.id,
+        name: analysis.user.name,
+        username: analysis.user.username || analysis.user.name,
+        avatarUrl: analysis.user.image,
+      } : undefined,
+    });
+  }
+}
+
+export const analysisService = new AnalysisService();
+
+
+------------------------------------------------
+FILE: ./apps/api/src/services/auth.service.ts
+------------------------------------------------
+import { OAuth2Client } from "google-auth-library";
+import { Role, prisma } from "@algoforge/db";
+import { env, googleOAuthConfig } from "../config/env";
+import { AppError } from "../utils/app-error";
+import { hashToken, randomToken, safeTokenEquals } from "../utils/crypto";
+import {
+  signAccessToken,
+  signRefreshToken,
+  verifyAccessToken,
+  verifyRefreshToken,
+} from "../utils/token";
+
+type RequestMetadata = {
+  ipAddress: string | null;
+  userAgent: string | null;
+};
+
+type AuthenticatedUser = {
+  id: string;
+  email: string | null;
+  name: string | null;
+  image: string | null;
+  role: Role;
+};
+
+type SessionCookies = {
+  accessToken: string;
+  refreshToken: string;
+  csrfToken: string;
+};
+
+type AuthResult = SessionCookies & {
+  user: AuthenticatedUser;
+};
+
+const googleClient = new OAuth2Client(
+  env.googleClientId,
+  env.googleClientSecret,
+  googleOAuthConfig.redirectUri,
+);
+
+const userSelect = {
+  id: true,
+  email: true,
+  username: true,
+  name: true,
+  image: true,
+  role: true,
+} as const;
+
+class AuthService {
+  buildGoogleAuthorizationUrl(): { url: string; state: string } {
+    const state = randomToken(32);
+    const url = googleClient.generateAuthUrl({
+      access_type: "offline",
+      scope: googleOAuthConfig.scopes,
+      include_granted_scopes: true,
+      state,
+      prompt: "select_account",
+    });
+
+    return { url, state };
+  }
+
+  async authenticateGoogleCallback(
+    code: string,
+    metadata: RequestMetadata,
+  ): Promise<AuthResult> {
+    const { tokens } = await googleClient.getToken(code);
+    const idToken = tokens.id_token;
+
+    if (!idToken) {
+      throw AppError.unauthorized("Google did not return an ID token.");
+    }
+
+    const ticket = await googleClient.verifyIdToken({
+      idToken,
+      audience: env.googleClientId,
+    });
+    const payload = ticket.getPayload();
+
+    if (!payload?.sub) {
+      throw AppError.unauthorized("Google account data is invalid.");
+    }
+
+    const user = await this.findOrCreateOAuthUser({
+      provider: "google",
+      providerAccountId: payload.sub,
+      email: payload.email_verified ? payload.email ?? null : null,
+      name: payload.name ?? null,
+      image: payload.picture ?? null,
+    });
+
+    return this.createSessionForUser(user, metadata);
+  }
+
+  async authenticateAccessToken(accessToken: string) {
+    const payload = verifyAccessToken(accessToken);
+
+    const session = await prisma.session.findFirst({
+      where: {
+        id: payload.sessionId,
+        userId: payload.sub,
+        revokedAt: null,
+        expiresAt: { gt: new Date() },
+      },
+      select: {
+        id: true,
+        expiresAt: true,
+        user: {
+          select: userSelect,
+        },
+      },
+    });
+
+    if (!session) {
+      throw AppError.unauthorized("Session is invalid.");
+    }
+
+    return {
+      user: session.user,
+      session: {
+        id: session.id,
+        expiresAt: session.expiresAt,
+      },
+    };
+  }
+
+  async rotateRefreshToken(
+    refreshToken: string,
+    metadata: RequestMetadata,
+  ): Promise<AuthResult> {
+    const payload = verifyRefreshToken(refreshToken);
+    const presentedTokenHash = hashToken(refreshToken);
+    const session = await prisma.session.findUnique({
+      where: { id: payload.sessionId },
+      include: {
+        user: { select: userSelect },
+      },
+    });
+
+    if (!session || session.userId !== payload.sub) {
+      throw AppError.unauthorized("Refresh session is invalid.");
+    }
+
+    if (!safeTokenEquals(presentedTokenHash, session.tokenHash)) {
+      throw AppError.unauthorized("Refresh token is invalid.");
+    }
+
+    if (session.revokedAt) {
+      await this.revokeAllUserSessions(session.userId);
+      throw AppError.unauthorized("Refresh token reuse detected.");
+    }
+
+    if (session.expiresAt <= new Date()) {
+      await this.revokeSession(session.id);
+      throw AppError.unauthorized("Refresh token expired.");
+    }
+
+    const rotatedSession = await prisma.$transaction(async (tx) => {
+      const now = new Date();
+      const revocation = await tx.session.updateMany({
+        where: {
+          id: session.id,
+          userId: session.userId,
+          tokenHash: presentedTokenHash,
+          revokedAt: null,
+          expiresAt: { gt: now },
+        },
+        data: {
+          revokedAt: now,
+          lastUsedAt: now,
+          ipAddress: metadata.ipAddress,
+          userAgent: metadata.userAgent,
+        },
+      });
+
+      if (revocation.count !== 1) {
+        throw AppError.unauthorized("Refresh token reuse detected.");
+      }
+
+      const nextRefreshToken = signRefreshToken({
+        sub: session.user.id,
+        sessionId: randomToken(24),
+      });
+
+      const nextSessionId = verifyRefreshToken(nextRefreshToken).sessionId;
+      const nextSession = await tx.session.create({
+        data: {
+          id: nextSessionId,
+          userId: session.user.id,
+          tokenHash: hashToken(nextRefreshToken),
+          expiresAt: this.buildRefreshExpiry(),
+          lastUsedAt: now,
+          ipAddress: metadata.ipAddress,
+          userAgent: metadata.userAgent,
+          rotatedFromId: session.id,
+        },
+      });
+
+      return {
+        session: nextSession,
+        refreshToken: nextRefreshToken,
+      };
+    }).catch(async (error) => {
+      if (error instanceof AppError && error.message === "Refresh token reuse detected.") {
+        await this.revokeAllUserSessions(session.userId);
+      }
+
+      throw error;
+    });
+
+    const accessToken = signAccessToken({
+      sub: session.user.id,
+      sessionId: rotatedSession.session.id,
+      role: session.user.role,
+    });
+
+    return {
+      accessToken,
+      refreshToken: rotatedSession.refreshToken,
+      csrfToken: randomToken(24),
+      user: session.user,
+    };
+  }
+
+  async revokeSessionByRefreshToken(refreshToken: string): Promise<void> {
+    try {
+      const payload = verifyRefreshToken(refreshToken);
+      await this.revokeSession(payload.sessionId, payload.sub);
+    } catch {
+      return;
+    }
+  }
+
+  async revokeAllUserSessions(userId: string): Promise<void> {
+    await prisma.session.updateMany({
+      where: {
+        userId,
+        revokedAt: null,
+      },
+      data: {
+        revokedAt: new Date(),
+      },
+    });
+  }
+
+  private async createSessionForUser(
+    user: AuthenticatedUser,
+    metadata: RequestMetadata,
+  ): Promise<AuthResult> {
+    const refreshToken = signRefreshToken({
+      sub: user.id,
+      sessionId: randomToken(24),
+    });
+    const refreshPayload = verifyRefreshToken(refreshToken);
+
+    await prisma.session.create({
+      data: {
+        id: refreshPayload.sessionId,
+        userId: user.id,
+        tokenHash: hashToken(refreshToken),
+        expiresAt: this.buildRefreshExpiry(),
+        lastUsedAt: new Date(),
+        ipAddress: metadata.ipAddress,
+        userAgent: metadata.userAgent,
+      },
+    });
+
+    const accessToken = signAccessToken({
+      sub: user.id,
+      sessionId: refreshPayload.sessionId,
+      role: user.role,
+    });
+
+    return {
+      accessToken,
+      refreshToken,
+      csrfToken: randomToken(24),
+      user,
+    };
+  }
+
+  private buildRefreshExpiry(): Date {
+    const expiresAt = new Date();
+    expiresAt.setDate(expiresAt.getDate() + env.refreshTokenTtlDays);
+    return expiresAt;
+  }
+
+  private async revokeSession(sessionId: string, userId?: string): Promise<void> {
+    await prisma.session.updateMany({
+      where: {
+        id: sessionId,
+        ...(userId ? { userId } : {}),
+        revokedAt: null,
+      },
+      data: {
+        revokedAt: new Date(),
+      },
+    });
+  }
+
+  private async findOrCreateOAuthUser(input: {
+    provider: string;
+    providerAccountId: string;
+    email: string | null;
+    name: string | null;
+    image: string | null;
+  }): Promise<AuthenticatedUser> {
+    return prisma.$transaction(async (tx) => {
+      const existingAccount = await tx.account.findUnique({
+        where: {
+          provider_providerAccountId: {
+            provider: input.provider,
+            providerAccountId: input.providerAccountId,
+          },
+        },
+        include: {
+          user: {
+            select: userSelect,
+          },
+        },
+      });
+
+      if (existingAccount) {
+        const updatedUser = await tx.user.update({
+          where: { id: existingAccount.userId },
+          data: {
+            email: input.email ?? existingAccount.user.email,
+            name: input.name,
+            image: input.image,
+          },
+          select: userSelect,
+        });
+
+        return updatedUser;
+      }
+
+      const existingUser =
+        input.email !== null
+          ? await tx.user.findUnique({
+              where: { email: input.email },
+              select: userSelect,
+            })
+          : null;
+
+      const user =
+        existingUser ??
+        (await tx.user.create({
+          data: {
+            email: input.email,
+            role: Role.USER,
+            name: input.name,
+            image: input.image,
+          },
+          select: userSelect,
+        }));
+
+      await tx.account.create({
+        data: {
+          provider: input.provider,
+          providerAccountId: input.providerAccountId,
+          userId: user.id,
+        },
+      });
+
+      if (existingUser) {
+        return tx.user.update({
+          where: { id: existingUser.id },
+          data: {
+            name: input.name,
+            image: input.image,
+          },
+          select: userSelect,
+        });
+      }
+
+      return user;
+    });
+  }
+}
+
+export const authService = new AuthService();
+
+
+------------------------------------------------
+FILE: ./apps/api/src/services/category.service.ts
+------------------------------------------------
+import { prisma } from "@algoforge/db";
+import {
+  CategoryResponseSchema,
+  type CreateCategory,
+  type UpdateCategory,
+  type CategoryResponse,
+} from "@algoforge/forge";
+import { AppError } from "../utils/app-error";
+
+function serializeCategory(category: {
+  id: string;
+  label: string;
+  description: string | null;
+  iconName: string | null;
+  sortOrder: number;
+  createdAt: Date;
+  updatedAt: Date;
+}): CategoryResponse {
+  return CategoryResponseSchema.parse({
+    id: category.id,
+    label: category.label,
+    description: category.description,
+    iconName: category.iconName,
+    sortOrder: category.sortOrder,
+    createdAt: category.createdAt.toISOString(),
+    updatedAt: category.updatedAt.toISOString(),
+  });
+}
+
+class CategoryService {
+  async listCategories(): Promise<CategoryResponse[]> {
+    const categories = await prisma.category.findMany({
+      orderBy: { sortOrder: "asc" },
+    });
+    return categories.map(serializeCategory);
+  }
+
+  async getCategoryById(id: string): Promise<CategoryResponse> {
+    const category = await prisma.category.findUnique({
+      where: { id },
+    });
+
+    if (!category) {
+      throw AppError.notFound("Category not found.");
+    }
+
+    return serializeCategory(category);
+  }
+
+  async createCategory(input: CreateCategory): Promise<CategoryResponse> {
+    const category = await prisma.category.create({
+      data: input,
+    });
+    return serializeCategory(category);
+  }
+
+  async updateCategory(
+    id: string,
+    input: UpdateCategory
+  ): Promise<CategoryResponse> {
+    const category = await prisma.category.update({
+      where: { id },
+      data: input,
+    });
+    return serializeCategory(category);
+  }
+
+  async deleteCategory(id: string): Promise<void> {
+    const count = await prisma.algorithm.count({
+      where: { categoryId: id },
+    });
+
+    if (count > 0) {
+      throw AppError.badRequest(
+        "Cannot delete category with associated algorithms."
+      );
+    }
+
+    await prisma.category.delete({
+      where: { id },
+    });
+  }
+}
+
+export const categoryService = new CategoryService();
+
+------------------------------------------------
+FILE: ./apps/api/src/services/providers/ai-provider.ts
+------------------------------------------------
+export type AIMessageRole = "system" | "user" | "assistant";
+
+export type AIMessage = {
+  role: AIMessageRole;
+  content: string;
+  reasoning_details?: unknown;
+};
+
+export type AIGenerateRequest = {
+  messages: AIMessage[];
+};
+
+export type AIGenerateResponse = {
+  model: string;
+  message: AIMessage;
+  history: AIMessage[];
+};
+
+export interface AIProvider {
+  readonly name: string;
+  generate(request: AIGenerateRequest): Promise<AIGenerateResponse>;
+}
+
+
+------------------------------------------------
+FILE: ./apps/api/src/services/providers/gemini.provider.ts
+------------------------------------------------
+import { GoogleGenAI } from "@google/genai";
+import { env } from "../../config/env";
+import { AppError } from "../../utils/app-error";
+import type { AIGenerateRequest, AIGenerateResponse, AIProvider } from "./ai-provider";
+
+export class GeminiProvider implements AIProvider {
+  readonly name = "gemini";
+  private readonly client: GoogleGenAI;
+
+  constructor(
+    private readonly config: {
+      apiKey: string;
+      model: string;
+    },
+  ) {
+    if (!config.apiKey) {
+      throw AppError.internal("Missing Gemini API key.");
+    }
+
+    this.client = new GoogleGenAI({ apiKey: config.apiKey });
+  }
+
+  async generate(request: AIGenerateRequest): Promise<AIGenerateResponse> {
+    try {
+      const prompt = request.messages.map((message) => message.content).join("\n\n");
+      const response = await this.client.models.generateContent({
+        model: this.config.model,
+        contents: prompt,
+        config: {
+          responseMimeType: "application/json",
+          temperature: 0.1,
+        },
+      });
+
+      const text = response.text?.trim();
+
+      if (!text) {
+        throw AppError.badGateway("Empty response from AI provider.");
+      }
+
+      const message = {
+        role: "assistant" as const,
+        content: text,
+      };
+
+      return {
+        model: this.config.model,
+        message,
+        history: [...request.messages, message],
+      };
+    } catch (error) {
+      if (error instanceof AppError) {
+        throw error;
+      }
+
+      if (!env.isProduction) {
+        console.error("[AI][gemini]", error);
+      }
+
+      throw AppError.badGateway("AI provider request failed.");
+    }
+  }
+}
+
+
+------------------------------------------------
+FILE: ./apps/api/src/services/providers/openrouter.provider.ts
+------------------------------------------------
+import OpenAI from "openai";
+import { env } from "../../config/env";
+import { AppError } from "../../utils/app-error";
+import type {
+  AIGenerateRequest,
+  AIGenerateResponse,
+  AIMessage,
+  AIProvider,
+} from "./ai-provider";
+
+type OpenRouterMessage = {
+  role: AIMessage["role"];
+  content: string;
+  reasoning_details?: unknown;
+};
+
+type OpenRouterChoiceMessage = {
+  content?: unknown;
+  reasoning_details?: unknown;
+};
+
+type OpenRouterCompletionResponse = {
+  choices?: Array<{
+    message?: OpenRouterChoiceMessage;
+  }>;
+};
+
+type OpenRouterChatRequest = {
+  model: string;
+  messages: OpenRouterMessage[];
+  reasoning: {
+    enabled: boolean;
+  };
+};
+
+export class OpenRouterProvider implements AIProvider {
+  readonly name = "openrouter";
+
+  private readonly clientsByKey = new Map<string, OpenAI>();
+  private readonly keyIndexByModel = new Map<string, number>();
+  private modelIndex = 0;
+
+  constructor(
+    private readonly config: {
+      apiKeys: string[];
+      freeModels: string[];
+      baseUrl: string;
+      appName?: string;
+      siteUrl?: string;
+    },
+  ) {
+    if (!config.apiKeys.length) {
+      throw AppError.internal("Missing OpenRouter API keys.");
+    }
+
+    if (!config.freeModels.length) {
+      throw AppError.internal("Missing OpenRouter free models.");
+    }
+  }
+
+  async generate(request: AIGenerateRequest): Promise<AIGenerateResponse> {
+    if (!request.messages.length) {
+      throw AppError.badRequest("AI request must include at least one message.");
+    }
+
+    let lastRetriableError: unknown;
+
+    // Loop through every model starting from the last successful/current index
+    for (let modelAttempt = 0; modelAttempt < this.config.freeModels.length; modelAttempt++) {
+      const modelState = this.getModelState(modelAttempt);
+
+      // For the selected model, try every single API key
+      for (let keyAttempt = 0; keyAttempt < this.config.apiKeys.length; keyAttempt++) {
+        const keyState = this.getKeyState(modelState.model, keyAttempt);
+
+        try {
+          const client = this.getClient(keyState.apiKey);
+          const completion = await client.chat.completions.create({
+            model: modelState.model,
+            messages: this.toOpenRouterMessages(request.messages),
+            reasoning: { enabled: true },
+          } as OpenRouterChatRequest);
+
+          const assistantMessage = this.toAssistantMessage(
+            completion as unknown as OpenRouterCompletionResponse,
+          );
+
+          // Success: Update the global model pointer to this working model
+          this.modelIndex = modelState.actualIndex;
+          
+          // Update the key pointer for this model to the NEXT key (for load balancing)
+          this.keyIndexByModel.set(
+            modelState.model,
+            (keyState.actualIndex + 1) % this.config.apiKeys.length,
+          );
+
+          return {
+            model: modelState.model,
+            message: assistantMessage,
+            history: [...request.messages, assistantMessage],
+          };
+        } catch (error) {
+          const statusCode = getStatusCode(error);
+
+          // 429 (Rate Limit) or 503 (Overloaded) are retriable
+          if (statusCode === 429 || statusCode === 503) {
+            lastRetriableError = error;
+            
+            // Immediately rotate the key index for this model so we don't hit the same limit next loop
+            this.keyIndexByModel.set(
+              modelState.model,
+              (keyState.actualIndex + 1) % this.config.apiKeys.length,
+            );
+
+            if (!env.isProduction) {
+              console.warn(
+                `[AI][openrouter] Key ${keyState.actualIndex} failed for model "${modelState.model}" (Status: ${statusCode}). Trying next key...`,
+              );
+            }
+            continue; // Try next key
+          }
+
+          // Fatal errors (401, 400, etc.) break immediately
+          throw this.normalizeError(error);
+        }
+      }
+
+      // If we reach here, all keys failed for the current model.
+      // We log the failure and the outer loop moves to the next model.
+      if (!env.isProduction) {
+        console.warn(
+          `[AI][openrouter] All keys exhausted for model "${modelState.model}". Rotating to next available model.`,
+        );
+      }
+      
+      // Update the global model index so we don't start with the failing model next time
+      this.modelIndex = (modelState.actualIndex + 1) % this.config.freeModels.length;
+    }
+
+    // Every key and every model has been exhausted
+    throw this.normalizeRetriableError(lastRetriableError);
+  }
+
+  private getModelState(offset: number) {
+    const actualIndex = (this.modelIndex + offset) % this.config.freeModels.length;
+    return {
+      actualIndex,
+      model: this.config.freeModels[actualIndex],
+    };
+  }
+
+  private getKeyState(model: string, offset: number) {
+    const startIndex = this.keyIndexByModel.get(model) ?? 0;
+    const actualIndex = (startIndex + offset) % this.config.apiKeys.length;
+    return {
+      actualIndex,
+      apiKey: this.config.apiKeys[actualIndex],
+    };
+  }
+
+  private getClient(apiKey: string): OpenAI {
+    const cached = this.clientsByKey.get(apiKey);
+    if (cached) return cached;
+
+    const client = new OpenAI({
+      apiKey,
+      baseURL: this.config.baseUrl,
+      defaultHeaders: {
+        ...(this.config.siteUrl ? { "HTTP-Referer": this.config.siteUrl } : {}),
+        ...(this.config.appName ? { "X-Title": this.config.appName } : {}),
+      },
+    });
+
+    this.clientsByKey.set(apiKey, client);
+    return client;
+  }
+
+  private toOpenRouterMessages(messages: AIMessage[]): OpenRouterMessage[] {
+    return messages.map((message) => ({
+      role: message.role,
+      content: message.content,
+      ...(message.reasoning_details !== undefined
+        ? { reasoning_details: message.reasoning_details }
+        : {}),
+    }));
+  }
+
+  private toAssistantMessage(response: OpenRouterCompletionResponse): AIMessage {
+    const message = response.choices?.[0]?.message;
+    const content = this.extractContent(message?.content);
+
+    if (!content) {
+      throw AppError.badGateway("Empty response from OpenRouter.");
+    }
+
+    return {
+      role: "assistant",
+      content,
+      ...(message?.reasoning_details !== undefined
+        ? { reasoning_details: message.reasoning_details }
+        : {}),
+    };
+  }
+
+  private extractContent(content: unknown): string {
+    if (typeof content === "string") return content.trim();
+    if (Array.isArray(content)) {
+      return content
+        .map((part) => {
+          if (typeof part === "string") return part;
+          if (part && typeof part === "object" && "text" in part) {
+            return (part as { text: string }).text;
+          }
+          return "";
+        })
+        .join("")
+        .trim();
+    }
+    return "";
+  }
+
+  private normalizeError(error: unknown): AppError {
+    const statusCode = getStatusCode(error);
+    if (statusCode === 401 || statusCode === 403) {
+      return AppError.badGateway("OpenRouter authentication failed.");
+    }
+    return AppError.badGateway("OpenRouter request failed.");
+  }
+
+  private normalizeRetriableError(error: unknown): AppError {
+    return AppError.badGateway(
+      "All OpenRouter keys and free models are currently exhausted.",
+    );
+  }
+}
+
+function getStatusCode(error: unknown): number | undefined {
+  if (error && typeof error === "object") {
+    const err = error as Record<string, any>;
+    return err.status ?? err.statusCode ?? undefined;
+  }
+  return undefined;
+} 
+
+------------------------------------------------
+FILE: ./apps/api/src/services/snapshot.service.ts
+------------------------------------------------
+import { prisma } from "@algoforge/db";
+import {
+    SnapshotResponseSchema,
+    type CreateSnapshot,
+    type SnapshotResponse,
+    ForgeRecorder,
+} from "@algoforge/forge";
+import { AppError } from "../utils/app-error";
+import { algorithmService } from "./algorithm.service";
+
+function serializeSnapshot(snapshot: {
+    id: string;
+    algorithmId: string;
+    input: unknown;
+    steps: unknown;
+    executionTimeMs: number;
+    createdAt: Date;
+}): SnapshotResponse {
+    return SnapshotResponseSchema.parse({
+        id: snapshot.id,
+        algorithmId: snapshot.algorithmId,
+        input: snapshot.input,
+        steps: snapshot.steps,
+        executionTimeMs: snapshot.executionTimeMs,
+        createdAt: snapshot.createdAt.toISOString(),
+    });
+}
+
+class SnapshotService {
+    async createSnapshot(input: CreateSnapshot): Promise<SnapshotResponse> {
+        const algorithm = await algorithmService.getAlgorithmById(
+            input.algorithmId,
+        );
+
+        const startTime = Date.now();
+        const steps = await this.executeForgeCode(
+            algorithm.forgeCode.body,
+            input.input,
+        );
+        const executionTimeMs = Date.now() - startTime;
+
+        const snapshot = await prisma.snapshot.create({
+            data: {
+                algorithmId: input.algorithmId,
+                input: input.input as any,
+                steps: steps as any,
+                executionTimeMs,
+            },
+        });
+
+        return serializeSnapshot(snapshot);
+    }
+
+    async getSnapshotById(id: string): Promise<SnapshotResponse> {
+        const snapshot = await prisma.snapshot.findUnique({
+            where: { id },
+        });
+
+        if (!snapshot) {
+            throw AppError.notFound("Snapshot not found.");
+        }
+
+        return serializeSnapshot(snapshot);
+    }
+
+    async listSnapshotsByAlgorithm(
+        algorithmId: string,
+    ): Promise<SnapshotResponse[]> {
+        const snapshots = await prisma.snapshot.findMany({
+            where: { algorithmId },
+            orderBy: { createdAt: "desc" },
+            take: 50,
+        });
+
+        return snapshots.map(serializeSnapshot);
+    }
+
+    async deleteSnapshot(id: string): Promise<void> {
+        await prisma.snapshot.delete({
+            where: { id },
+        });
+    }
+
+    private async executeForgeCode(
+        code: string,
+        input: Record<string, unknown>,
+    ): Promise<unknown[]> {
+        const forge = new ForgeRecorder();
+        const context = { forge, input };
+
+        try {
+            const fn = new Function("forge", "input", code);
+            fn(context.forge, context.input);
+            return forge.getSteps();
+        } catch (error) {
+            throw AppError.badRequest(
+                `ForgeCode execution failed: ${error instanceof Error ? error.message : "Unknown error"}`,
+            );
+        }
+    }
+}
+
+export const snapshotService = new SnapshotService();
+
+
+------------------------------------------------
+FILE: ./apps/api/src/services/user.service.ts
+------------------------------------------------
+import { prisma } from "@algoforge/db";
+import { type SafeUser } from "@algoforge/analysis";
+import { verifyAccessToken } from "../utils/token";
+
+class UserService {
+  async getUserById(userId: string): Promise<SafeUser | null> {
+    const user = await (prisma.user.findUnique as any)({
+      where: { id: userId },
+      select: {
+        id: true,
+        name: true,
+        username: true,
+        image: true,
+      },
+    });
+
+    if (!user) return null;
+
+    return {
+      id: user.id,
+      name: user.name,
+      username: user.username || user.name,
+      avatarUrl: user.image,
+    };
+  }
+
+  async getUserByToken(token: string): Promise<SafeUser | null> {
+    try {
+      const payload = verifyAccessToken(token);
+      
+      // Also verify session exists and is active
+      const session = await prisma.session.findFirst({
+        where: {
+          id: payload.sessionId,
+          userId: payload.sub,
+          revokedAt: null,
+          expiresAt: { gt: new Date() },
+        },
+      });
+
+      if (!session) return null;
+
+      return this.getUserById(payload.sub);
+    } catch (error) {
+      return null;
+    }
+  }
+}
+
+export const userService = new UserService();
+
+
+------------------------------------------------
+FILE: ./apps/api/src/types/express.d.ts
+------------------------------------------------
+import { Role } from "@algoforge/db";
+
+type AnalysisResult = {
+  summary: string;
+
+  complexity: {
+    time: {
+      best: string;
+      average: string;
+      worst: string;
+    };
+    space: string;
+  };
+
+  breakdown: {
+    approach: string;
+    steps: string[];
+  };
+
+  bottlenecks: {
+    issue: string;
+    impact: string;
+    location?: string;
+  }[];
+
+  antiPatterns: string[];
+
+  improvements: {
+    suggestion: string;
+    expectedImpact: string;
+  }[];
+
+  optimizedCode: string;
+
+  comparison?: {
+    originalVsOptimized: string;
+    improvementSummary: string;
+  };
+
+  edgeCases: string[];
+
+  readabilityScore?: number;
+
+  tags?: string[];
+};
+
+declare global {
+  namespace Express {
+    interface Request {
+      auth?: {
+        user: {
+          id: string;
+          email: string | null;
+          name: string | null;
+          image: string | null;
+          role: Role;
+        };
+        session: {
+          id: string;
+          expiresAt: Date;
+        };
+      };
+      analysisResult?: AnalysisResult;
+    }
+  }
+}
+
+export {};
+
+------------------------------------------------
+FILE: ./apps/api/src/utils/app-error.ts
+------------------------------------------------
+export class AppError extends Error {
+  constructor(
+    public readonly statusCode: number,
+    message: string,
+    public readonly code: string,
+  ) {
+    super(message);
+  }
+
+  static badRequest(message: string): AppError {
+    return new AppError(400, message, "BAD_REQUEST");
+  }
+
+  static unauthorized(message: string): AppError {
+    return new AppError(401, message, "UNAUTHORIZED");
+  }
+
+  static forbidden(message: string): AppError {
+    return new AppError(403, message, "FORBIDDEN");
+  }
+
+  static notFound(message: string): AppError {
+    return new AppError(404, message, "NOT_FOUND");
+  }
+
+  static badGateway(message: string): AppError {
+    return new AppError(502, message, "BAD_GATEWAY");
+  }
+
+  static internal(message: string): AppError {
+    return new AppError(500, message, "INTERNAL_ERROR");
+  }
+}
+
+
+------------------------------------------------
+FILE: ./apps/api/src/utils/async-handler.ts
+------------------------------------------------
+import { NextFunction, Request, Response } from "express";
+
+type AsyncRouteHandler = (
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) => Promise<void>;
+
+export function asyncHandler(handler: AsyncRouteHandler) {
+  return (req: Request, res: Response, next: NextFunction): void => {
+    void handler(req, res, next).catch(next);
+  };
+}
+
+
+------------------------------------------------
+FILE: ./apps/api/src/utils/cookies.ts
+------------------------------------------------
+import { Request, Response } from "express";
+import { authCookies, env } from "../config/env";
+
+type AuthCookieValues = {
+  accessToken: string;
+  refreshToken: string;
+  csrfToken: string;
+};
+
+function buildCookieOptions(maxAgeMs: number, httpOnly: boolean, path = "/") {
+  return {
+    httpOnly,
+    secure: env.isProduction,
+    sameSite: "lax" as const,
+    path,
+    maxAge: maxAgeMs,
+    ...(env.cookieDomain ? { domain: env.cookieDomain } : {}),
+  };
+}
+
+export function getCookie(req: Request, name: string): string | null {
+  const header = req.headers.cookie;
+  if (!header) {
+    return null;
+  }
+
+  const cookies = header.split(";").map((cookie) => cookie.trim());
+  for (const cookie of cookies) {
+    const separatorIndex = cookie.indexOf("=");
+    if (separatorIndex === -1) {
+      continue;
+    }
+
+    const key = cookie.slice(0, separatorIndex);
+    if (key !== name) {
+      continue;
+    }
+
+    return decodeURIComponent(cookie.slice(separatorIndex + 1));
+  }
+
+  return null;
+}
+
+export function setAuthCookies(res: Response, values: AuthCookieValues): void {
+  res.cookie(
+    authCookies.accessToken,
+    values.accessToken,
+    buildCookieOptions(env.accessTokenTtlMinutes * 60 * 1000, true),
+  );
+  res.cookie(
+    authCookies.refreshToken,
+    values.refreshToken,
+    buildCookieOptions(env.refreshTokenTtlDays * 24 * 60 * 60 * 1000, true, "/api/auth"),
+  );
+  res.cookie(
+    authCookies.csrfToken,
+    values.csrfToken,
+    buildCookieOptions(env.refreshTokenTtlDays * 24 * 60 * 60 * 1000, false),
+  );
+}
+
+export function clearAuthCookies(res: Response): void {
+  res.clearCookie(authCookies.accessToken, buildCookieOptions(0, true));
+  res.clearCookie(
+    authCookies.refreshToken,
+    buildCookieOptions(0, true, "/api/auth"),
+  );
+  res.clearCookie(authCookies.csrfToken, buildCookieOptions(0, false));
+}
+
+export function setOAuthStateCookie(res: Response, state: string): void {
+  res.cookie(
+    authCookies.oauthState,
+    state,
+    buildCookieOptions(10 * 60 * 1000, true, "/api/auth/google"),
+  );
+}
+
+export function clearOAuthStateCookie(res: Response): void {
+  res.clearCookie(
+    authCookies.oauthState,
+    buildCookieOptions(0, true, "/api/auth/google"),
+  );
+}
+
+
+------------------------------------------------
+FILE: ./apps/api/src/utils/crypto.ts
+------------------------------------------------
+import { createHash, randomBytes, timingSafeEqual } from "crypto";
+
+export function randomToken(bytes = 32): string {
+  return randomBytes(bytes).toString("hex");
+}
+
+export function hashToken(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+export function safeTokenEquals(left: string, right: string): boolean {
+  const leftBuffer = Buffer.from(left);
+  const rightBuffer = Buffer.from(right);
+
+  if (leftBuffer.length !== rightBuffer.length) {
+    return false;
+  }
+
+  return timingSafeEqual(leftBuffer, rightBuffer);
+}
+
+
+------------------------------------------------
+FILE: ./apps/api/src/utils/token.ts
+------------------------------------------------
+import jwt, { JwtPayload, SignOptions } from "jsonwebtoken";
+import { Role } from "@algoforge/db";
+import { env } from "../config/env";
+import { AppError } from "./app-error";
+
+type BaseTokenPayload = {
+  sub: string;
+  sessionId: string;
+};
+
+export type AccessTokenPayload = BaseTokenPayload & {
+  role: Role;
+  type: "access";
+};
+
+export type RefreshTokenPayload = BaseTokenPayload & {
+  type: "refresh";
+};
+
+function verifyToken<T extends JwtPayload>(token: string, secret: string): T {
+  const payload = jwt.verify(token, secret, {
+    issuer: env.authIssuer,
+    audience: env.authAudience,
+  });
+
+  if (typeof payload === "string") {
+    throw AppError.unauthorized("Invalid token payload.");
+  }
+
+  return payload as T;
+}
+
+function buildSignOptions(expiresIn: SignOptions["expiresIn"]): SignOptions {
+  return {
+    expiresIn,
+    issuer: env.authIssuer,
+    audience: env.authAudience,
+  };
+}
+
+export function signAccessToken(payload: BaseTokenPayload & { role: Role }): string {
+  return jwt.sign(
+    {
+      ...payload,
+      type: "access",
+    },
+    env.jwtAccessSecret,
+    buildSignOptions(`${env.accessTokenTtlMinutes}m`),
+  );
+}
+
+export function signRefreshToken(payload: BaseTokenPayload): string {
+  return jwt.sign(
+    {
+      ...payload,
+      type: "refresh",
+    },
+    env.jwtRefreshSecret,
+    buildSignOptions(`${env.refreshTokenTtlDays}d`),
+  );
+}
+
+export function verifyAccessToken(token: string): AccessTokenPayload {
+  const payload = verifyToken<AccessTokenPayload>(token, env.jwtAccessSecret);
+
+  if (payload.type !== "access" || !payload.sub || !payload.sessionId) {
+    throw AppError.unauthorized("Invalid access token.");
+  }
+
+  return payload;
+}
+
+export function verifyRefreshToken(token: string): RefreshTokenPayload {
+  const payload = verifyToken<RefreshTokenPayload>(token, env.jwtRefreshSecret);
+
+  if (payload.type !== "refresh" || !payload.sub || !payload.sessionId) {
+    throw AppError.unauthorized("Invalid refresh token.");
+  }
+
+  return payload;
+}
+
+
+------------------------------------------------
+FILE: ./apps/api/src/validation/algorithm.ts
+------------------------------------------------
+import {
+  CreateAlgorithmSchema,
+  UpdateAlgorithmSchema,
+  type CreateAlgorithm,
+  type UpdateAlgorithm,
+} from "@algoforge/forge";
+import { AppError } from "../utils/app-error";
+import type { AlgorithmQuery } from "../services/algorithm.service";
+
+export function parseCreateAlgorithm(value: unknown): CreateAlgorithm {
+  const result = CreateAlgorithmSchema.safeParse(value);
+
+  if (!result.success) {
+    throw AppError.badRequest(
+      result.error.issues[0]?.message ?? "Invalid algorithm data."
+    );
+  }
+
+  return result.data;
+}
+
+export function parseUpdateAlgorithm(value: unknown): UpdateAlgorithm {
+  const result = UpdateAlgorithmSchema.safeParse(value);
+
+  if (!result.success) {
+    throw AppError.badRequest(
+      result.error.issues[0]?.message ?? "Invalid algorithm data."
+    );
+  }
+
+  return result.data;
+}
+
+export function parseAlgorithmQuery(value: unknown): AlgorithmQuery {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {};
+  }
+
+  const query = value as Record<string, unknown>;
+
+  return {
+    categoryId:
+      typeof query.categoryId === "string" ? query.categoryId : undefined,
+    difficulty:
+      typeof query.difficulty === "string" ? query.difficulty : undefined,
+    isPublished:
+      query.isPublished === "true"
+        ? true
+        : query.isPublished === "false"
+          ? false
+          : undefined,
+    search: typeof query.search === "string" ? query.search : undefined,
+  };
+}
+
+------------------------------------------------
+FILE: ./apps/api/src/validation/analysis.ts
+------------------------------------------------
+import { CreateAnalysisInputSchema, type CreateAnalysisInput } from "@algoforge/analysis";
+import { AppError } from "../utils/app-error";
+
+export type AnalysisInput = CreateAnalysisInput;
+export type AnalysisHistoryQuery = {
+  cursor: string | null;
+  limit: number;
+};
+export type AnalysisCursor = {
+  createdAt: string;
+  id: string;
+};
+
+const DEFAULT_ANALYSIS_PAGE_SIZE = 10;
+const MAX_ANALYSIS_PAGE_SIZE = 50;
+
+export function parseAnalysisInput(value: unknown): AnalysisInput {
+  const result = CreateAnalysisInputSchema.safeParse(value);
+
+  if (!result.success) {
+    throw AppError.badRequest(result.error.issues[0]?.message ?? "Invalid analysis request.");
+  }
+
+  return result.data;
+}
+
+export function parseAnalysisHistoryQuery(value: unknown): AnalysisHistoryQuery {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {
+      cursor: null,
+      limit: DEFAULT_ANALYSIS_PAGE_SIZE,
+    };
+  }
+
+  const query = value as Record<string, unknown>;
+  const cursorValue = query.cursor;
+  const limitValue = query.limit;
+
+  if (Array.isArray(cursorValue) || Array.isArray(limitValue)) {
+    throw AppError.badRequest("Invalid analysis history query.");
+  }
+
+  let cursor: string | null = null;
+  if (typeof cursorValue !== "undefined") {
+    if (typeof cursorValue !== "string" || !cursorValue.trim()) {
+      throw AppError.badRequest("Cursor must be a non-empty string.");
+    }
+
+    cursor = cursorValue.trim();
+  }
+
+  const rawLimit =
+    typeof limitValue === "undefined" ? DEFAULT_ANALYSIS_PAGE_SIZE : Number(limitValue);
+
+  if (!Number.isInteger(rawLimit)) {
+    throw AppError.badRequest("Limit must be an integer.");
+  }
+
+  if (rawLimit < 1) {
+    throw AppError.badRequest("Limit must be at least 1.");
+  }
+
+  if (rawLimit > MAX_ANALYSIS_PAGE_SIZE) {
+    throw AppError.badRequest(`Limit cannot exceed ${MAX_ANALYSIS_PAGE_SIZE}.`);
+  }
+
+  return {
+    cursor,
+    limit: rawLimit,
+  };
+}
+
+export function encodeAnalysisCursor(cursor: AnalysisCursor): string {
+  return Buffer.from(JSON.stringify(cursor), "utf8").toString("base64url");
+}
+
+export function decodeAnalysisCursor(cursor: string): AnalysisCursor {
+  try {
+    const decoded = Buffer.from(cursor, "base64url").toString("utf8");
+    const value = JSON.parse(decoded) as Partial<AnalysisCursor>;
+
+    if (
+      typeof value.createdAt !== "string" ||
+      Number.isNaN(Date.parse(value.createdAt)) ||
+      typeof value.id !== "string" ||
+      !value.id.trim()
+    ) {
+      throw new Error("Malformed cursor.");
+    }
+
+    return {
+      createdAt: value.createdAt,
+      id: value.id.trim(),
+    };
+  } catch {
+    throw AppError.badRequest("Invalid cursor.");
+  }
+}
+
+
+------------------------------------------------
+FILE: ./apps/api/src/validation/category.ts
+------------------------------------------------
+import {
+  CreateCategorySchema,
+  UpdateCategorySchema,
+  type CreateCategory,
+  type UpdateCategory,
+} from "@algoforge/forge";
+import { AppError } from "../utils/app-error";
+
+export function parseCreateCategory(value: unknown): CreateCategory {
+  const result = CreateCategorySchema.safeParse(value);
+
+  if (!result.success) {
+    throw AppError.badRequest(
+      result.error.issues[0]?.message ?? "Invalid category data."
+    );
+  }
+
+  return result.data;
+}
+
+export function parseUpdateCategory(value: unknown): UpdateCategory {
+  const result = UpdateCategorySchema.safeParse(value);
+
+  if (!result.success) {
+    throw AppError.badRequest(
+      result.error.issues[0]?.message ?? "Invalid category data."
+    );
+  }
+
+  return result.data;
+}
+
+------------------------------------------------
+FILE: ./apps/api/src/validation/common.ts
+------------------------------------------------
+import { AppError } from "../utils/app-error";
+
+export function ensureString(value: unknown, message: string): string {
+  if (typeof value !== "string" || !value.trim()) {
+    throw AppError.badRequest(message);
+  }
+
+  return value.trim();
+}
+
+
+------------------------------------------------
+FILE: ./apps/api/src/validation/snapshot.ts
+------------------------------------------------
+import {
+  CreateSnapshotSchema,
+  type CreateSnapshot,
+} from "@algoforge/forge";
+import { AppError } from "../utils/app-error";
+
+export function parseCreateSnapshot(value: unknown): CreateSnapshot {
+  const result = CreateSnapshotSchema.safeParse(value);
+
+  if (!result.success) {
+    throw AppError.badRequest(
+      result.error.issues[0]?.message ?? "Invalid snapshot data."
+    );
+  }
+
+  return result.data;
+}
+
+------------------------------------------------
+FILE: ./apps/web/.next/types/cache-life.d.ts
+------------------------------------------------
+// Type definitions for Next.js cacheLife configs
+
+declare module 'next/cache' {
+  export { unstable_cache } from 'next/dist/server/web/spec-extension/unstable-cache'
+  export {
+    updateTag,
+    revalidateTag,
+    revalidatePath,
+    refresh,
+  } from 'next/dist/server/web/spec-extension/revalidate'
+  export { unstable_noStore } from 'next/dist/server/web/spec-extension/unstable-no-store'
+
+  
+    /**
+     * Cache this `"use cache"` for a timespan defined by the `"default"` profile.
+     * ```
+     *   stale:      300 seconds (5 minutes)
+     *   revalidate: 900 seconds (15 minutes)
+     *   expire:     never
+     * ```
+     * 
+     * This cache may be stale on clients for 5 minutes before checking with the server.
+     * If the server receives a new request after 15 minutes, start revalidating new values in the background.
+     * It lives for the maximum age of the server cache. If this entry has no traffic for a while, it may serve an old value the next request.
+     */
+    export function cacheLife(profile: "default"): void
+    
+    /**
+     * Cache this `"use cache"` for a timespan defined by the `"seconds"` profile.
+     * ```
+     *   stale:      30 seconds
+     *   revalidate: 1 seconds
+     *   expire:     60 seconds (1 minute)
+     * ```
+     * 
+     * This cache may be stale on clients for 30 seconds before checking with the server.
+     * If the server receives a new request after 1 seconds, start revalidating new values in the background.
+     * If this entry has no traffic for 1 minute it will expire. The next request will recompute it.
+     */
+    export function cacheLife(profile: "seconds"): void
+    
+    /**
+     * Cache this `"use cache"` for a timespan defined by the `"minutes"` profile.
+     * ```
+     *   stale:      300 seconds (5 minutes)
+     *   revalidate: 60 seconds (1 minute)
+     *   expire:     3600 seconds (1 hour)
+     * ```
+     * 
+     * This cache may be stale on clients for 5 minutes before checking with the server.
+     * If the server receives a new request after 1 minute, start revalidating new values in the background.
+     * If this entry has no traffic for 1 hour it will expire. The next request will recompute it.
+     */
+    export function cacheLife(profile: "minutes"): void
+    
+    /**
+     * Cache this `"use cache"` for a timespan defined by the `"hours"` profile.
+     * ```
+     *   stale:      300 seconds (5 minutes)
+     *   revalidate: 3600 seconds (1 hour)
+     *   expire:     86400 seconds (1 day)
+     * ```
+     * 
+     * This cache may be stale on clients for 5 minutes before checking with the server.
+     * If the server receives a new request after 1 hour, start revalidating new values in the background.
+     * If this entry has no traffic for 1 day it will expire. The next request will recompute it.
+     */
+    export function cacheLife(profile: "hours"): void
+    
+    /**
+     * Cache this `"use cache"` for a timespan defined by the `"days"` profile.
+     * ```
+     *   stale:      300 seconds (5 minutes)
+     *   revalidate: 86400 seconds (1 day)
+     *   expire:     604800 seconds (1 week)
+     * ```
+     * 
+     * This cache may be stale on clients for 5 minutes before checking with the server.
+     * If the server receives a new request after 1 day, start revalidating new values in the background.
+     * If this entry has no traffic for 1 week it will expire. The next request will recompute it.
+     */
+    export function cacheLife(profile: "days"): void
+    
+    /**
+     * Cache this `"use cache"` for a timespan defined by the `"weeks"` profile.
+     * ```
+     *   stale:      300 seconds (5 minutes)
+     *   revalidate: 604800 seconds (1 week)
+     *   expire:     2592000 seconds (1 month)
+     * ```
+     * 
+     * This cache may be stale on clients for 5 minutes before checking with the server.
+     * If the server receives a new request after 1 week, start revalidating new values in the background.
+     * If this entry has no traffic for 1 month it will expire. The next request will recompute it.
+     */
+    export function cacheLife(profile: "weeks"): void
+    
+    /**
+     * Cache this `"use cache"` for a timespan defined by the `"max"` profile.
+     * ```
+     *   stale:      300 seconds (5 minutes)
+     *   revalidate: 2592000 seconds (1 month)
+     *   expire:     31536000 seconds (365 days)
+     * ```
+     * 
+     * This cache may be stale on clients for 5 minutes before checking with the server.
+     * If the server receives a new request after 1 month, start revalidating new values in the background.
+     * If this entry has no traffic for 365 days it will expire. The next request will recompute it.
+     */
+    export function cacheLife(profile: "max"): void
+    
+    /**
+     * Cache this `"use cache"` using a custom timespan.
+     * ```
+     *   stale: ... // seconds
+     *   revalidate: ... // seconds
+     *   expire: ... // seconds
+     * ```
+     *
+     * This is similar to Cache-Control: max-age=`stale`,s-max-age=`revalidate`,stale-while-revalidate=`expire-revalidate`
+     *
+     * If a value is left out, the lowest of other cacheLife() calls or the default, is used instead.
+     */
+    export function cacheLife(profile: {
+      /**
+       * This cache may be stale on clients for ... seconds before checking with the server.
+       */
+      stale?: number,
+      /**
+       * If the server receives a new request after ... seconds, start revalidating new values in the background.
+       */
+      revalidate?: number,
+      /**
+       * If this entry has no traffic for ... seconds it will expire. The next request will recompute it.
+       */
+      expire?: number
+    }): void
+  
+
+  import { cacheTag } from 'next/dist/server/use-cache/cache-tag'
+  export { cacheTag }
+
+  export const unstable_cacheTag: typeof cacheTag
+  export const unstable_cacheLife: typeof cacheLife
+}
+
+
+------------------------------------------------
+FILE: ./apps/web/.next/types/routes.d.ts
+------------------------------------------------
+// This file is generated automatically by Next.js
+// Do not edit this file manually
+
+type AppRoutes = "/" | "/analysis/[id]" | "/share/[shareId]"
+type PageRoutes = never
+type LayoutRoutes = "/"
+type RedirectRoutes = never
+type RewriteRoutes = never
+type Routes = AppRoutes | PageRoutes | LayoutRoutes | RedirectRoutes | RewriteRoutes
+
+
+interface ParamMap {
+  "/": {}
+  "/analysis/[id]": { "id": string; }
+  "/share/[shareId]": { "shareId": string; }
+}
+
+
+export type ParamsOf<Route extends Routes> = ParamMap[Route]
+
+interface LayoutSlotMap {
+  "/": never
+}
+
+
+export type { AppRoutes, PageRoutes, LayoutRoutes, RedirectRoutes, RewriteRoutes, ParamMap }
+
+declare global {
+  /**
+   * Props for Next.js App Router page components
+   * @example
+   * ```tsx
+   * export default function Page(props: PageProps<'/blog/[slug]'>) {
+   *   const { slug } = await props.params
+   *   return <div>Blog post: {slug}</div>
+   * }
+   * ```
+   */
+  interface PageProps<AppRoute extends AppRoutes> {
+    params: Promise<ParamMap[AppRoute]>
+    searchParams: Promise<Record<string, string | string[] | undefined>>
+  }
+
+  /**
+   * Props for Next.js App Router layout components
+   * @example
+   * ```tsx
+   * export default function Layout(props: LayoutProps<'/dashboard'>) {
+   *   return <div>{props.children}</div>
+   * }
+   * ```
+   */
+  type LayoutProps<LayoutRoute extends LayoutRoutes> = {
+    params: Promise<ParamMap[LayoutRoute]>
+    children: React.ReactNode
+  } & {
+    [K in LayoutSlotMap[LayoutRoute]]: React.ReactNode
+  }
+}
+
+
+------------------------------------------------
+FILE: ./apps/web/.next/types/validator.ts
+------------------------------------------------
+// This file is generated automatically by Next.js
+// Do not edit this file manually
+// This file validates that all pages and layouts export the correct types
+
+import type { AppRoutes, LayoutRoutes, ParamMap } from "./routes.js"
+import type { ResolvingMetadata, ResolvingViewport } from "next/types.js"
+
+type AppPageConfig<Route extends AppRoutes = AppRoutes> = {
+  default: React.ComponentType<{ params: Promise<ParamMap[Route]> } & any> | ((props: { params: Promise<ParamMap[Route]> } & any) => React.ReactNode | Promise<React.ReactNode> | never | void | Promise<void>)
+  generateStaticParams?: (props: { params: ParamMap[Route] }) => Promise<any[]> | any[]
+  generateMetadata?: (
+    props: { params: Promise<ParamMap[Route]> } & any,
+    parent: ResolvingMetadata
+  ) => Promise<any> | any
+  generateViewport?: (
+    props: { params: Promise<ParamMap[Route]> } & any,
+    parent: ResolvingViewport
+  ) => Promise<any> | any
+  metadata?: any
+  viewport?: any
+}
+
+type LayoutConfig<Route extends LayoutRoutes = LayoutRoutes> = {
+  default: React.ComponentType<LayoutProps<Route>> | ((props: LayoutProps<Route>) => React.ReactNode | Promise<React.ReactNode> | never | void | Promise<void>)
+  generateStaticParams?: (props: { params: ParamMap[Route] }) => Promise<any[]> | any[]
+  generateMetadata?: (
+    props: { params: Promise<ParamMap[Route]> } & any,
+    parent: ResolvingMetadata
+  ) => Promise<any> | any
+  generateViewport?: (
+    props: { params: Promise<ParamMap[Route]> } & any,
+    parent: ResolvingViewport
+  ) => Promise<any> | any
+  metadata?: any
+  viewport?: any
+}
+
+
+// Validate ../../src/app/analysis/[id]/page.tsx
+{
+  type __IsExpected<Specific extends AppPageConfig<"/analysis/[id]">> = Specific
+  const handler = {} as typeof import("../../src/app/analysis/[id]/page.js")
+  type __Check = __IsExpected<typeof handler>
+  // @ts-ignore
+  type __Unused = __Check
+}
+
+// Validate ../../src/app/page.tsx
+{
+  type __IsExpected<Specific extends AppPageConfig<"/">> = Specific
+  const handler = {} as typeof import("../../src/app/page.js")
+  type __Check = __IsExpected<typeof handler>
+  // @ts-ignore
+  type __Unused = __Check
+}
+
+// Validate ../../src/app/share/[shareId]/page.tsx
+{
+  type __IsExpected<Specific extends AppPageConfig<"/share/[shareId]">> = Specific
+  const handler = {} as typeof import("../../src/app/share/[shareId]/page.js")
+  type __Check = __IsExpected<typeof handler>
+  // @ts-ignore
+  type __Unused = __Check
+}
+
+
+
+
+
+
+
+// Validate ../../src/app/layout.tsx
+{
+  type __IsExpected<Specific extends LayoutConfig<"/">> = Specific
+  const handler = {} as typeof import("../../src/app/layout.js")
+  type __Check = __IsExpected<typeof handler>
+  // @ts-ignore
+  type __Unused = __Check
+}
+
+
+------------------------------------------------
+FILE: ./apps/web/next-env.d.ts
+------------------------------------------------
+/// <reference types="next" />
+/// <reference types="next/image-types/global" />
+import "./.next/types/routes.d.ts";
+
+// NOTE: This file should not be edited
+// see https://nextjs.org/docs/app/api-reference/config/typescript for more information.
+
+
+------------------------------------------------
+FILE: ./apps/web/next.config.ts
+------------------------------------------------
+import type { NextConfig } from "next";
+
+const nextConfig: NextConfig = {
+    reactStrictMode: true,
+    transpilePackages: ["@algoforge/analysis", "@algoforge/db"],
+};
+
+export default nextConfig;
+
+
+------------------------------------------------
+FILE: ./apps/web/src/app/analysis/[id]/page.tsx
+------------------------------------------------
+"use client";
+
+import Link from "next/link";
+import { useEffect } from "react";
+import { useParams } from "next/navigation";
+import LoginButton from "@/components/LoginButton";
+import { AnalysisHistoryList } from "@/components/AnalysisHistoryList";
+import { AnalysisResult } from "@/components/AnalysisResult";
+import { useAuth } from "@/context/Authcontext";
+import { useAnalysisHistoryStore } from "@/store/analysis-history";
+
+export default function AnalysisDetailPage() {
+  const params = useParams<{ id: string | string[] }>();
+  const analysisId = Array.isArray(params.id) ? params.id[0] : params.id;
+  const { user, isLoading, logout } = useAuth();
+  const orderedHistoryIds = useAnalysisHistoryStore((state) => state.orderedHistoryIds);
+  const historyById = useAnalysisHistoryStore((state) => state.historyById);
+  const analysesById = useAnalysisHistoryStore((state) => state.analysesById);
+  const activeDetailError = useAnalysisHistoryStore((state) => state.activeDetailError);
+  const pageError = useAnalysisHistoryStore((state) => state.pageError);
+  const hasMore = useAnalysisHistoryStore((state) => state.hasMore);
+  const isFetchingPage = useAnalysisHistoryStore((state) => state.isFetchingPage);
+  const fetchInitialPage = useAnalysisHistoryStore((state) => state.fetchInitialPage);
+  const fetchNextPage = useAnalysisHistoryStore((state) => state.fetchNextPage);
+  const fetchAnalysis = useAnalysisHistoryStore((state) => state.fetchAnalysis);
+  const setActiveAnalysisId = useAnalysisHistoryStore((state) => state.setActiveAnalysisId);
+  const analysis = analysisId ? analysesById[analysisId] ?? null : null;
+  const historyItems = orderedHistoryIds.flatMap((id) => {
+    const item = historyById[id];
+    return item ? [item] : [];
+  });
+
+  useEffect(() => {
+    if (!user) {
+      return;
+    }
+
+    void fetchInitialPage().catch((error) => {
+      console.error("Failed to hydrate analysis history:", error);
+    });
+  }, [fetchInitialPage, user]);
+
+  useEffect(() => {
+    if (!user || !analysisId) {
+      return;
+    }
+
+    setActiveAnalysisId(analysisId);
+    void fetchAnalysis(analysisId).catch((error) => {
+      console.error("Failed to load analysis detail:", error);
+    });
+  }, [analysisId, fetchAnalysis, setActiveAnalysisId, user]);
+
+  if (isLoading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-slate-950 text-slate-100">
+        <p>Loading...</p>
+      </div>
+    );
+  }
+
+  if (!user) {
+    return (
+      <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-slate-950 px-6 text-slate-100">
+        <h1 className="text-3xl font-bold">AlgoForge</h1>
+        <p className="text-sm text-slate-400">Sign in to access stored analyses.</p>
+        <LoginButton />
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-slate-950 px-6 py-8 text-slate-100">
+      <div className="mx-auto max-w-6xl">
+        <div className="mb-8 flex flex-col justify-between gap-4 border-b border-slate-800 pb-6 md:flex-row md:items-center">
+          <div>
+            <p className="text-sm uppercase tracking-[0.25em] text-slate-500">Stored Analysis</p>
+            <h1 className="mt-2 text-3xl font-bold">Analysis Detail</h1>
+          </div>
+          <div className="flex items-center gap-3">
+            <Link
+              href="/"
+              className="rounded-lg border border-slate-700 px-4 py-2 text-sm font-medium text-slate-200"
+            >
+              Back to workspace
+            </Link>
+            <button
+              onClick={() => void logout()}
+              className="rounded-lg border border-slate-700 px-4 py-2 text-sm font-medium text-slate-200"
+            >
+              Logout
+            </button>
+          </div>
+        </div>
+
+        <div className="grid gap-6 lg:grid-cols-[minmax(0,2fr)_minmax(320px,1fr)]">
+          <div>
+            {activeDetailError ? (
+              <p className="rounded-lg border border-red-900 bg-red-950/40 px-4 py-3 text-sm text-red-200">
+                {activeDetailError}
+              </p>
+            ) : null}
+            {analysis ? (
+              <AnalysisResult result={analysis} />
+            ) : (
+              <div className="rounded-xl border border-slate-800 bg-slate-950/70 p-6 text-sm text-slate-400">
+                Loading stored result from the database...
+              </div>
+            )}
+          </div>
+          <div>
+            <AnalysisHistoryList
+              analyses={historyItems}
+              selectedId={analysisId}
+              isLoading={isFetchingPage}
+              hasMore={hasMore}
+              errorMessage={pageError}
+              onLoadMore={() => {
+                void fetchNextPage().catch((error) => {
+                  console.error("Failed to fetch the next analysis page:", error);
+                });
+              }}
+            />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+------------------------------------------------
+FILE: ./apps/web/src/app/layout.tsx
+------------------------------------------------
+import { AuthProvider } from "@/context/Authcontext";
+import type { Metadata } from "next";
+import "./global.css";
+
+export const metadata: Metadata = {
+    title: "AlgoForge",
+    description: "Algorithm analyzer",
+    icons: {
+      icon: '/algoforge.png', // Point to a file in your public folder
+    },
+
+};
+
+export default function RootLayout({
+    children,
+}: {
+    children: React.ReactNode;
+}) {
+    return (
+        <html lang="en">
+            <body>
+                <AuthProvider>{children}</AuthProvider>
+            </body>
+        </html>
+    );
+}
+
+
+------------------------------------------------
+FILE: ./apps/web/src/app/page.tsx
+------------------------------------------------
+"use client";
+
+import Link from "next/link";
+import { useEffect, useMemo, useState } from "react";
+import { useAuth } from "@/context/Authcontext";
+import { AnalysisHistoryList } from "@/components/AnalysisHistoryList";
+import { AnalysisResult } from "@/components/AnalysisResult";
+import { useAnalysisHistoryStore } from "@/store/analysis-history";
+import AnalysisForm from "../components/AnalysisForm";
+import LoginButton from "../components/LoginButton";
+
+export default function Home() {
+  const { user, logout, isLoading } = useAuth();
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [authError, setAuthError] = useState<string | null>(null);
+  const orderedHistoryIds = useAnalysisHistoryStore((state) => state.orderedHistoryIds);
+  const historyById = useAnalysisHistoryStore((state) => state.historyById);
+  const analysesById = useAnalysisHistoryStore((state) => state.analysesById);
+  const activeAnalysisId = useAnalysisHistoryStore((state) => state.activeAnalysisId);
+  const pageError = useAnalysisHistoryStore((state) => state.pageError);
+  const hasMore = useAnalysisHistoryStore((state) => state.hasMore);
+  const isFetchingPage = useAnalysisHistoryStore((state) => state.isFetchingPage);
+  const fetchInitialPage = useAnalysisHistoryStore((state) => state.fetchInitialPage);
+  const fetchNextPage = useAnalysisHistoryStore((state) => state.fetchNextPage);
+  const cacheAnalysis = useAnalysisHistoryStore((state) => state.cacheAnalysis);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    setAuthError(params.get("authError"));
+  }, []);
+
+  useEffect(() => {
+    if (!user) {
+      return;
+    }
+
+    void fetchInitialPage().catch((error) => {
+      console.error("Failed to hydrate analysis history:", error);
+    });
+  }, [fetchInitialPage, user]);
+
+  const historyItems = useMemo(
+    () =>
+      orderedHistoryIds.flatMap((id) => {
+        const item = historyById[id];
+        return item ? [item] : [];
+      }),
+    [historyById, orderedHistoryIds],
+  );
+
+  const activeAnalysis = activeAnalysisId ? analysesById[activeAnalysisId] ?? null : null;
+  const latestHistoryAnalysis = historyItems[0] ?? null;
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center min-h-screen">
+        <p>Loading...</p>
+      </div>
+    );
+  }
+
+  if (!user) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-screen p-8">
+        <h1 className="text-4xl font-bold mb-8">AlgoForge</h1>
+        <p className="text-gray-600 mb-8">Sign in to analyze your code</p>
+        {authError ? (
+          <p className="mb-4 text-sm text-red-600">
+            Authentication failed. Try again.
+          </p>
+        ) : null}
+        <LoginButton />
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-slate-950 px-6 py-8 text-slate-100">
+      <div className="mx-auto max-w-6xl">
+        <div className="mb-8 flex flex-col justify-between gap-4 border-b border-slate-800 pb-6 md:flex-row md:items-center">
+          <div className="flex items-center gap-4">
+            {user.avatarUrl ? (
+              <img 
+                src={user.avatarUrl} 
+                alt={user.name || "User"} 
+                className="h-12 w-12 rounded-full border-2 border-cyan-500/50 shadow-[0_0_10px_rgba(6,182,212,0.3)]"
+              />
+            ) : (
+              <div className="flex h-12 w-12 items-center justify-center rounded-full border-2 border-slate-700 bg-slate-800 text-lg font-bold text-slate-400">
+                {(user.name || user.username || "?")[0].toUpperCase()}
+              </div>
+            )}
+            <div>
+              <h1 className="text-3xl font-bold bg-gradient-to-r from-white to-slate-400 bg-clip-text text-transparent">AlgoForge</h1>
+              <div className="flex items-center gap-2">
+                <p className="text-slate-200 font-medium">{user.name}</p>
+                {user.username && (
+                  <p className="text-sm text-slate-500">@{user.username}</p>
+                )}
+              </div>
+            </div>
+          </div>
+          <div className="flex items-center gap-3">
+            {latestHistoryAnalysis ? (
+              <Link
+                href={`/analysis/${latestHistoryAnalysis.id}`}
+                className="rounded-lg border border-slate-700 bg-slate-900/50 px-4 py-2 text-sm font-medium text-slate-200 transition-colors hover:bg-slate-800"
+              >
+                Open latest
+              </Link>
+            ) : null}
+            <button
+              onClick={() => void logout()}
+              className="rounded-lg border border-slate-700 bg-slate-900/50 px-4 py-2 text-sm font-medium text-slate-200 transition-colors hover:bg-red-950/30 hover:border-red-900/50"
+            >
+              Logout
+            </button>
+          </div>
+        </div>
+
+        {errorMessage ? (
+          <p className="mb-4 rounded-lg border border-red-900 bg-red-950/40 px-4 py-3 text-sm text-red-200">
+            {errorMessage}
+          </p>
+        ) : null}
+
+        <div className="grid gap-6 lg:grid-cols-[minmax(0,2fr)_minmax(320px,1fr)]">
+          <div>
+            <AnalysisForm
+              onResult={(result) => {
+                setErrorMessage(null);
+                cacheAnalysis(result);
+              }}
+              onError={setErrorMessage}
+            />
+            {activeAnalysis ? <AnalysisResult result={activeAnalysis} /> : null}
+          </div>
+          <div>
+            <AnalysisHistoryList
+              analyses={historyItems}
+              selectedId={activeAnalysisId}
+              isLoading={isFetchingPage}
+              hasMore={hasMore}
+              errorMessage={pageError}
+              onLoadMore={() => {
+                void fetchNextPage().catch((error) => {
+                  console.error("Failed to fetch the next analysis page:", error);
+                });
+              }}
+            />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+------------------------------------------------
+FILE: ./apps/web/src/app/share/[shareId]/page.tsx
+------------------------------------------------
+import { API_URL } from "@/lib/config";
+import ShareClient from "./ShareClient";
+import type { Metadata } from "next";
+
+async function getAnalysis(shareId: string) {
+  const res = await fetch(`${API_URL}/api/share/${shareId}`, {
+    cache: 'no-store',
+  });
+
+  if (!res.ok) {
+    return null;
+  }
+
+  return res.json();
+}
+
+export async function generateMetadata({ params }: { params: Promise<{ shareId: string }> }): Promise<Metadata> {
+  const { shareId } = await params;
+  const analysis = await getAnalysis(shareId);
+
+  if (!analysis) {
+    return {
+      title: "Analysis Not Found - AlgoForge",
+    };
+  }
+
+  return {
+    title: `Code Analysis - ${analysis.language}`,
+    description: `Check out this ${analysis.language} code analysis on AlgoForge. Complexity: ${analysis.result.complexity.time.worst}.`,
+    openGraph: {
+      title: "AlgoForge - Shareable Code Report",
+      description: `Deep-dive analysis of ${analysis.language} code.`,
+      type: "website",
+    },
+  };
+}
+
+export default async function SharePage({ params }: { params: Promise<{ shareId: string }> }) {
+  const { shareId } = await params;
+  const analysis = await getAnalysis(shareId);
+
+  if (!analysis) {
+    return (
+      <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-slate-950 px-6 text-slate-100">
+        <h1 className="text-3xl font-bold text-red-500">Not Found</h1>
+        <p className="text-slate-400">This analysis report does not exist or is no longer public.</p>
+      </div>
+    );
+  }
+
+  return <ShareClient analysis={analysis} />;
+}
+
+
+------------------------------------------------
+FILE: ./apps/web/src/app/share/[shareId]/ShareClient.tsx
+------------------------------------------------
+"use client";
+
+import { AnalysisResult } from "@/components/AnalysisResult";
+
+export default function ShareClient({ analysis }: { analysis: any }) {
+  return (
+    <div className="min-h-screen bg-slate-950 px-6 py-8 text-slate-100">
+      <div className="mx-auto max-w-4xl">
+        <div className="mb-8 border-b border-slate-800 pb-6">
+          <p className="text-center text-sm uppercase tracking-[0.25em] text-cyan-500">AlgoForge Shared Report</p>
+          <h1 className="mt-2 text-center text-4xl font-bold bg-gradient-to-r from-white to-slate-400 bg-clip-text text-transparent">
+            Code Analysis
+          </h1>
+          
+          {analysis.creator && (
+            <div className="mt-6 flex items-center justify-center gap-3">
+              {analysis.creator.avatarUrl ? (
+                <img 
+                  src={analysis.creator.avatarUrl} 
+                  alt={analysis.creator.name || "Creator"} 
+                  className="h-10 w-10 rounded-full border border-slate-700"
+                />
+              ) : (
+                <div className="flex h-10 w-10 items-center justify-center rounded-full border border-slate-700 bg-slate-800 text-sm font-bold text-slate-400">
+                  {(analysis.creator.name || analysis.creator.username || "?")[0].toUpperCase()}
+                </div>
+              )}
+              <div className="text-left">
+                <p className="text-xs uppercase tracking-widest text-slate-500">Shared by</p>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-sm font-semibold text-slate-200">{analysis.creator.name}</span>
+                  {analysis.creator.username && (
+                    <span className="text-xs text-slate-500">@{analysis.creator.username}</span>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {analysis && (
+          <div className="space-y-8">
+            <section className="rounded-xl border border-slate-800 bg-slate-900/50 p-6">
+              <h3 className="mb-4 text-sm font-semibold uppercase tracking-[0.2em] text-slate-400">Original Code</h3>
+              <pre className="overflow-x-auto rounded-lg bg-black/40 p-4 text-sm leading-6 text-slate-200">
+                <code>{analysis.code}</code>
+              </pre>
+            </section>
+
+            <AnalysisResult result={analysis} />
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+
+------------------------------------------------
+FILE: ./apps/web/src/components/AnalysisForm.tsx
+------------------------------------------------
+"use client";
+
+import { useState, type ChangeEvent, type FormEvent } from "react";
+import type { AnalysisLanguage, AnalysisRecord } from "@algoforge/analysis";
+import { AnalysisApiError, createAnalysis } from "@/lib/analyses";
+
+const LANGUAGES: { value: AnalysisLanguage; label: string }[] = [
+  { value: "javascript", label: "JavaScript" },
+  { value: "python", label: "Python" },
+];
+
+type Props = {
+  onResult: (data: AnalysisRecord) => void;
+  onError: (msg: string) => void;
+};
+
+export default function AnalysisForm({ onResult, onError }: Props) {
+  const [code, setCode] = useState("");
+  const [language, setLanguage] = useState<AnalysisLanguage>("javascript");
+  const [loading, setLoading] = useState(false);
+
+  async function handleSubmit(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+
+    if (!code.trim()) {
+      onError("Code cannot be empty.");
+      return;
+    }
+
+    setLoading(true);
+    onError("");
+
+    try {
+      const analysis = await createAnalysis({
+        code: code.trim(),
+        language,
+      });
+
+      onResult(analysis);
+    } catch (err) {
+      if (err instanceof AnalysisApiError && err.status === 401) {
+        onError("Your session expired. Please sign in again.");
+        return;
+      }
+
+      console.error(err);
+      onError(err instanceof Error ? err.message : "Failed to reach the API. Is backend running?");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function handleLanguageChange(e: ChangeEvent<HTMLSelectElement>) {
+    setLanguage(e.target.value as AnalysisLanguage);
+  }
+
+  return (
+    <form onSubmit={handleSubmit} className="space-y-4 mb-8">
+      <div>
+        <label className="block text-sm font-medium mb-2 text-gray-300">
+          Language
+        </label>
+        <select
+          value={language}
+          onChange={handleLanguageChange}
+          disabled={loading}
+          className="w-full px-4 py-2 rounded-lg bg-[#1a1a2e] border border-[#2d2d4e] text-white focus:outline-none disabled:opacity-60"
+        >
+          {LANGUAGES.map((lang) => (
+            <option key={lang.value} value={lang.value}>
+              {lang.label}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      <div>
+        <label className="block text-sm font-medium mb-2 text-gray-300">
+          Code
+        </label>
+        <textarea
+          value={code}
+          onChange={(e) => setCode(e.target.value)}
+          placeholder={language === "python" ? "# Paste your code here..." : "// Paste your code here..."}
+          disabled={loading}
+          className="w-full h-64 px-4 py-2 rounded-lg bg-[#1a1a2e] border border-[#2d2d4e] text-sm font-mono text-gray-200 focus:outline-none resize-y disabled:opacity-60"
+        />
+      </div>
+
+      <button
+        type="submit"
+        disabled={loading || !code.trim()}
+        className="w-full px-6 py-3 rounded-lg bg-purple-600 hover:bg-purple-700 disabled:opacity-50 text-white font-semibold transition"
+      >
+        {loading ? "Analyzing..." : "Analyze Code"}
+      </button>
+    </form>
+  );
+}
+
+
+------------------------------------------------
+FILE: ./apps/web/src/components/AnalysisHistoryList.tsx
+------------------------------------------------
+"use client";
+
+import Link from "next/link";
+import type { AnalysisHistoryItem } from "@algoforge/analysis";
+
+type Props = {
+  analyses: AnalysisHistoryItem[];
+  selectedId?: string | null;
+  isLoading: boolean;
+  hasMore: boolean;
+  errorMessage: string | null;
+  onLoadMore: () => void;
+};
+
+export function AnalysisHistoryList({
+  analyses,
+  selectedId,
+  isLoading,
+  hasMore,
+  errorMessage,
+  onLoadMore,
+}: Props) {
+  return (
+    <section className="rounded-xl border border-slate-800 bg-slate-950/70 p-5">
+      <div className="mb-4 flex items-center justify-between gap-3">
+        <div>
+          <h2 className="text-lg font-semibold text-slate-100">Analysis History</h2>
+          <p className="text-sm text-slate-400">Stored analyses only. No recomputation.</p>
+        </div>
+        <span className="text-sm text-slate-500">{analyses.length} loaded</span>
+      </div>
+
+      {errorMessage ? (
+        <p className="mb-4 rounded-lg border border-red-900 bg-red-950/40 px-3 py-2 text-sm text-red-200">
+          {errorMessage}
+        </p>
+      ) : null}
+
+      {!analyses.length && !isLoading ? (
+        <p className="rounded-lg border border-dashed border-slate-700 px-3 py-6 text-sm text-slate-400">
+          No analyses found yet.
+        </p>
+      ) : (
+        <div className="space-y-3">
+          {analyses.map((analysis) => {
+            const isSelected = selectedId === analysis.id;
+
+            return (
+              <Link
+                key={analysis.id}
+                href={`/analysis/${analysis.id}`}
+                className={`block rounded-lg border px-4 py-3 text-sm ${
+                  isSelected
+                    ? "border-cyan-500 bg-cyan-500/10 text-slate-100"
+                    : "border-slate-800 bg-slate-900/70 text-slate-200"
+                }`}
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="font-medium uppercase tracking-wide">{analysis.language}</p>
+                    <p className="mt-1 text-slate-400">
+                      {analysis.suggestion ?? analysis.complexity ?? "Stored analysis"}
+                    </p>
+                  </div>
+                  <p className="whitespace-nowrap text-xs text-slate-500">
+                    {new Date(analysis.createdAt).toLocaleString()}
+                  </p>
+                </div>
+              </Link>
+            );
+          })}
+        </div>
+      )}
+
+      {hasMore ? (
+        <button
+          type="button"
+          onClick={onLoadMore}
+          disabled={isLoading}
+          className="mt-4 w-full rounded-lg border border-slate-700 px-4 py-2 text-sm font-medium text-slate-200 disabled:opacity-60"
+        >
+          {isLoading ? "Loading..." : "Load more"}
+        </button>
+      ) : null}
+    </section>
+  );
+}
+
+
+------------------------------------------------
+FILE: ./apps/web/src/components/AnalysisResult.tsx
+------------------------------------------------
+import { useState } from "react";
+import type { ReactNode } from "react";
+import type { AnalysisRecord } from "@algoforge/analysis";
+import { shareAnalysis } from "@/lib/analyses";
+
+type Props = {
+  result: AnalysisRecord;
+};
+
+function Section({
+  title,
+  children,
+}: {
+  title: string;
+  children: ReactNode;
+}) {
+  return (
+    <section className="rounded-xl border border-slate-800 bg-slate-950/80 p-5">
+      <h3 className="mb-3 text-sm font-semibold uppercase tracking-[0.2em] text-slate-400">
+        {title}
+      </h3>
+      {children}
+    </section>
+  );
+}
+
+function Metric({
+  label,
+  value,
+}: {
+  label: string;
+  value: string;
+}) {
+  return (
+    <div className="rounded-xl border border-slate-800 bg-slate-950/80 p-4">
+      <p className="text-xs uppercase tracking-[0.2em] text-slate-500">{label}</p>
+      <p className="mt-2 text-lg font-semibold text-slate-100">{value}</p>
+    </div>
+  );
+}
+
+export function AnalysisResult({ result }: Props) {
+  const [shareUrl, setShareUrl] = useState<string | null>(null);
+  const [isSharing, setIsSharing] = useState(false);
+  const [copySuccess, setCopySuccess] = useState(false);
+
+  const handleShare = async () => {
+    setIsSharing(true);
+    try {
+      const response = await shareAnalysis(result.id);
+      setShareUrl(response.shareUrl);
+    } catch (err) {
+      console.error("Failed to share analysis:", err);
+    } finally {
+      setIsSharing(false);
+    }
+  };
+
+  const handleCopy = () => {
+    if (shareUrl) {
+      void navigator.clipboard.writeText(shareUrl);
+      setCopySuccess(true);
+      setTimeout(() => setCopySuccess(false), 2000);
+    }
+  };
+
+  return (
+    <div className="mt-8 space-y-5 rounded-2xl border border-slate-800 bg-slate-900/70 p-6 shadow-2xl shadow-slate-950/30">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <h2 className="text-2xl font-semibold text-slate-50">Analysis Result</h2>
+          <p className="mt-2 text-sm text-slate-400">
+            Stored at {new Date(result.createdAt).toLocaleString()}
+          </p>
+        </div>
+        <div className="flex items-center gap-3">
+          {result.id && (
+            shareUrl ? (
+              <div className="flex items-center gap-2 overflow-hidden rounded-lg border border-slate-700 bg-slate-950 p-1">
+                <span className="max-w-[150px] truncate px-2 text-xs text-slate-400">
+                  {shareUrl}
+                </span>
+                <button
+                  onClick={handleCopy}
+                  className="rounded-md bg-cyan-600 px-3 py-1 text-xs font-medium text-white transition hover:bg-cyan-500"
+                >
+                  {copySuccess ? "Copied!" : "Copy"}
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={handleShare}
+                disabled={isSharing}
+                className="rounded-lg border border-slate-700 bg-slate-950 px-4 py-2 text-sm font-medium text-slate-200 transition hover:bg-slate-900 disabled:opacity-50"
+              >
+                {isSharing ? "Sharing..." : "Share Report"}
+              </button>
+            )
+          )}
+          <div className="rounded-full border border-cyan-400/30 bg-cyan-400/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.2em] text-cyan-200">
+            {result.language}
+          </div>
+        </div>
+      </div>
+
+      <Section title="Summary">
+        <p className="text-sm leading-7 text-slate-200">{result.result.summary}</p>
+      </Section>
+
+      <div className="grid gap-4 md:grid-cols-4">
+        <Metric label="Best Time" value={result.result.complexity.time.best} />
+        <Metric label="Average Time" value={result.result.complexity.time.average} />
+        <Metric label="Worst Time" value={result.result.complexity.time.worst} />
+        <Metric label="Space" value={result.result.complexity.space} />
+      </div>
+
+      <Section title="Breakdown">
+        <p className="text-sm leading-7 text-slate-200">{result.result.breakdown.approach}</p>
+        <ol className="mt-4 space-y-2 text-sm text-slate-300">
+          {result.result.breakdown.steps.map((step, index) => (
+            <li key={`${step}-${index}`} className="rounded-lg border border-slate-800 bg-slate-900/80 px-3 py-2">
+              {index + 1}. {step}
+            </li>
+          ))}
+        </ol>
+      </Section>
+
+      <Section title="Bottlenecks">
+        <div className="space-y-3">
+          {result.result.bottlenecks.length ? (
+            result.result.bottlenecks.map((item, index) => (
+              <div key={`${item.issue}-${index}`} className="rounded-lg border border-amber-400/20 bg-amber-400/5 p-4">
+                <p className="font-medium text-amber-100">{item.issue}</p>
+                <p className="mt-2 text-sm text-slate-300">{item.impact}</p>
+                {item.location ? (
+                  <p className="mt-2 text-xs uppercase tracking-[0.2em] text-amber-300/80">
+                    {item.location}
+                  </p>
+                ) : null}
+              </div>
+            ))
+          ) : (
+            <p className="text-sm text-slate-400">No significant bottlenecks detected.</p>
+          )}
+        </div>
+      </Section>
+
+      <Section title="Anti-Patterns">
+        <div className="flex flex-wrap gap-2">
+          {result.result.antiPatterns.length ? (
+            result.result.antiPatterns.map((item, index) => (
+              <span key={`${item}-${index}`} className="rounded-full border border-rose-400/25 bg-rose-400/10 px-3 py-1 text-sm text-rose-100">
+                {item}
+              </span>
+            ))
+          ) : (
+            <p className="text-sm text-slate-400">No anti-patterns detected.</p>
+          )}
+        </div>
+      </Section>
+
+      <Section title="Improvements">
+        <div className="space-y-3">
+          {result.result.improvements.length ? (
+            result.result.improvements.map((item, index) => (
+              <div key={`${item.suggestion}-${index}`} className="rounded-lg border border-emerald-400/20 bg-emerald-400/5 p-4">
+                <p className="font-medium text-emerald-100">{item.suggestion}</p>
+                <p className="mt-2 text-sm text-slate-300">{item.expectedImpact}</p>
+              </div>
+            ))
+          ) : (
+            <p className="text-sm text-slate-400">No improvements suggested.</p>
+          )}
+        </div>
+      </Section>
+
+      <Section title="Optimized Code">
+        <pre className="overflow-x-auto rounded-xl border border-slate-800 bg-black/40 p-4 text-sm leading-6 text-slate-200">
+          <code>{result.result.optimizedCode}</code>
+        </pre>
+      </Section>
+
+      {result.result.comparison ? (
+        <Section title="Comparison">
+          <p className="text-sm leading-7 text-slate-200">
+            {result.result.comparison.originalVsOptimized}
+          </p>
+          <p className="mt-3 text-sm leading-7 text-slate-400">
+            {result.result.comparison.improvementSummary}
+          </p>
+        </Section>
+      ) : null}
+
+      <Section title="Edge Cases">
+        <div className="flex flex-wrap gap-2">
+          {result.result.edgeCases.length ? (
+            result.result.edgeCases.map((item, index) => (
+              <span key={`${item}-${index}`} className="rounded-full border border-blue-400/25 bg-blue-400/10 px-3 py-1 text-sm text-blue-100">
+                {item}
+              </span>
+            ))
+          ) : (
+            <p className="text-sm text-slate-400">No edge cases reported.</p>
+          )}
+        </div>
+      </Section>
+
+      {typeof result.result.readabilityScore === "number" || result.result.tags?.length ? (
+        <div className="grid gap-4 md:grid-cols-2">
+          {typeof result.result.readabilityScore === "number" ? (
+            <Section title="Readability Score">
+              <p className="text-3xl font-semibold text-slate-50">{result.result.readabilityScore}/100</p>
+            </Section>
+          ) : null}
+          {result.result.tags?.length ? (
+            <Section title="Tags">
+              <div className="flex flex-wrap gap-2">
+                {result.result.tags.map((tag) => (
+                  <span key={tag} className="rounded-full border border-slate-700 bg-slate-800 px-3 py-1 text-sm text-slate-200">
+                    {tag}
+                  </span>
+                ))}
+              </div>
+            </Section>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+
+------------------------------------------------
+FILE: ./apps/web/src/components/AuthProvider.tsx
+------------------------------------------------
+"use client";
+
+import { useEffect } from "react";
+import { useAuthStore } from "@/store/useAuthStore";
+import { fetchMe } from "@/lib/auth";
+
+export function AuthProvider({ children }: { children: React.ReactNode }) {
+  const { setUser, setLoading } = useAuthStore();
+
+  useEffect(() => {
+    async function initAuth() {
+      setLoading(true);
+      const user = await fetchMe();
+      setUser(user);
+    }
+
+    initAuth();
+  }, [setUser, setLoading]);
+
+  return <>{children}</>;
+}
+
+
+------------------------------------------------
+FILE: ./apps/web/src/components/LoginButton.tsx
+------------------------------------------------
+"use client";
+
+import { useState } from "react";
+import { API_URL } from "@/lib/config";
+
+export default function LoginButton() {
+  const [isLoading, setIsLoading] = useState(false);
+
+  const handleGoogleLogin = () => {
+    try {
+      setIsLoading(true);
+      window.location.assign(`${API_URL}/api/auth/google/start`);
+    } catch (error) {
+      console.error("Login error:", error);
+      setIsLoading(false);
+    }
+  };
+
+  return (
+    <button
+      onClick={handleGoogleLogin}
+      disabled={isLoading}
+      className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+    >
+      {isLoading ? "Redirecting..." : "Sign in with Google"}
+    </button>
+  );
+}
+
+
+------------------------------------------------
+FILE: ./apps/web/src/context/Authcontext.tsx
+------------------------------------------------
+"use client";
+
+import React, { createContext, useContext, useEffect, useState } from "react";
+import { type SafeUser } from "@algoforge/analysis";
+import { apiFetch } from "@/lib/api";
+import { useAnalysisHistoryStore } from "@/store/analysis-history";
+
+interface AuthContextType {
+    user: SafeUser | null;
+    logout: () => Promise<void>;
+    hydrateSession: () => Promise<void>;
+    isLoading: boolean;
+}
+
+const AuthContext = createContext<AuthContextType | undefined>(undefined);
+
+export function AuthProvider({ children }: { children: React.ReactNode }) {
+    const [user, setUser] = useState<SafeUser | null>(null);
+    const [isLoading, setIsLoading] = useState(true);
+    const resetAnalysisHistory = useAnalysisHistoryStore((state) => state.reset);
+
+    const hydrateSession = async (initial = false) => {
+        try {
+            if (initial) setIsLoading(true);
+
+            // Using /api/auth/me as per new requirements for safe user profile
+            const response = await apiFetch("/api/auth/me");
+
+            if (response.ok) {
+                const data = await response.json();
+                setUser(data.user);
+            } else {
+                setUser(null);
+                if (initial) resetAnalysisHistory();
+            }
+        } catch (error) {
+            console.error("Session bootstrap failed:", error);
+            setUser(null);
+            resetAnalysisHistory();
+        } finally {
+            if (initial) setIsLoading(false);
+        }
+    };
+
+    useEffect(() => {
+        void hydrateSession(true);
+    }, []);
+
+    const logout = async () => {
+        try {
+            await apiFetch("/api/auth/logout", {
+                method: "POST",
+            });
+        } catch (error) {
+            console.error("Logout failed:", error);
+        }
+
+        setUser(null);
+        resetAnalysisHistory();
+    };
+
+    return (
+        <AuthContext.Provider
+            value={{ user, logout, hydrateSession, isLoading }}
+        >
+            {children}
+        </AuthContext.Provider>
+    );
+}
+
+export function useAuth() {
+    const context = useContext(AuthContext);
+    if (context === undefined) {
+        throw new Error("useAuth must be used within AuthProvider");
+    }
+    return context;
+}
+
+
+------------------------------------------------
+FILE: ./apps/web/src/lib/analyses.ts
+------------------------------------------------
+"use client";
+
+import {
+  AnalysisHistoryResponseSchema,
+  CreateAnalysisInputSchema,
+  AnalysisRecordSchema,
+  type AnalysisHistoryResponse,
+  type CreateAnalysisInput,
+  type AnalysisRecord,
+} from "@algoforge/analysis";
+import { apiFetch } from "./api";
+
+const DEFAULT_PAGE_LIMIT = 10;
+
+export class AnalysisApiError extends Error {
+  constructor(
+    message: string,
+    public readonly status: number,
+  ) {
+    super(message);
+  }
+}
+
+async function parseError(response: Response): Promise<never> {
+  let message = "Request failed.";
+
+  try {
+    const payload = (await response.json()) as { error?: string };
+    if (payload.error) {
+      message = payload.error;
+    }
+  } catch {
+    // Ignore JSON parsing issues and fall back to the default message.
+  }
+
+  throw new AnalysisApiError(message, response.status);
+}
+
+export async function fetchAnalysesPage(cursor: string | null): Promise<AnalysisHistoryResponse> {
+  const params = new URLSearchParams({
+    limit: String(DEFAULT_PAGE_LIMIT),
+  });
+
+  if (cursor) {
+    params.set("cursor", cursor);
+  }
+
+  const response = await apiFetch(`/api/analyses?${params.toString()}`);
+
+  if (!response.ok) {
+    return parseError(response);
+  }
+
+  return AnalysisHistoryResponseSchema.parse(await response.json());
+}
+
+export async function fetchAnalysisById(analysisId: string): Promise<AnalysisRecord> {
+  const response = await apiFetch(`/api/analyses/${analysisId}`);
+
+  if (!response.ok) {
+    return parseError(response);
+  }
+
+  return AnalysisRecordSchema.parse(await response.json());
+}
+
+export async function createAnalysis(input: CreateAnalysisInput): Promise<AnalysisRecord> {
+  const payload = CreateAnalysisInputSchema.parse(input);
+  const response = await apiFetch("/api/analysis", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    return parseError(response);
+  }
+
+  return AnalysisRecordSchema.parse(await response.json());
+}
+
+export async function shareAnalysis(analysisId: string): Promise<{ shareUrl: string }> {
+  const response = await apiFetch(`/api/analysis/${analysisId}/share`, {
+    method: "POST",
+  });
+
+  if (!response.ok) {
+    return parseError(response);
+  }
+
+  return response.json() as Promise<{ shareUrl: string }>;
+}
+
+export async function fetchPublicAnalysis(shareId: string): Promise<any> {
+  const response = await apiFetch(`/api/share/${shareId}`);
+
+  if (!response.ok) {
+    return parseError(response);
+  }
+
+  return response.json();
+}
+
+
+
+------------------------------------------------
+FILE: ./apps/web/src/lib/api.ts
+------------------------------------------------
+import { API_URL } from "./config";
+import { getCookie } from "./cookies";
+
+let refreshPromise: Promise<boolean> | null = null;
+
+function buildUrl(path: string): string {
+  if (path.startsWith("http://") || path.startsWith("https://")) {
+    return path;
+  }
+
+  return `${API_URL}${path.startsWith("/") ? path : `/${path}`}`;
+}
+
+async function refreshSession(): Promise<boolean> {
+  if (!refreshPromise) {
+    refreshPromise = (async () => {
+      const csrfToken = getCookie("af_csrf");
+      const response = await fetch(buildUrl("/api/auth/refresh"), {
+        method: "POST",
+        credentials: "include",
+        headers: csrfToken ? { "X-CSRF-Token": csrfToken } : undefined,
+      });
+
+      return response.ok;
+    })().finally(() => {
+      refreshPromise = null;
+    });
+  }
+
+  return refreshPromise;
+}
+
+export async function apiFetch(
+  path: string,
+  init: RequestInit = {},
+  options: { retryOnAuth?: boolean } = {},
+): Promise<Response> {
+  const method = (init.method ?? "GET").toUpperCase();
+  const headers = new Headers(init.headers);
+  const csrfToken = getCookie("af_csrf");
+
+  if (init.body && !(init.body instanceof FormData) && !headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json");
+  }
+
+  if (["POST", "PUT", "PATCH", "DELETE"].includes(method) && csrfToken) {
+    headers.set("X-CSRF-Token", csrfToken);
+  }
+
+  const response = await fetch(buildUrl(path), {
+    ...init,
+    method,
+    headers,
+    credentials: "include",
+  });
+
+  if (
+    response.status === 401 &&
+    options.retryOnAuth !== false &&
+    !path.endsWith("/api/auth/refresh") &&
+    !path.endsWith("/api/auth/logout")
+  ) {
+    const refreshed = await refreshSession();
+    if (refreshed) {
+      return apiFetch(path, init, { retryOnAuth: false });
+    }
+  }
+
+  return response;
+}
+
+
+------------------------------------------------
+FILE: ./apps/web/src/lib/auth.ts
+------------------------------------------------
+import { type SafeUser } from "@algoforge/analysis";
+import { apiFetch } from "./api";
+
+export async function fetchMe(): Promise<SafeUser | null> {
+  try {
+    const response = await apiFetch("/api/auth/me");
+    if (!response.ok) return null;
+    const data = await response.json();
+    return data.user;
+  } catch (error) {
+    console.error("Failed to fetch current user:", error);
+    return null;
+  }
+}
+
+export async function logout(): Promise<void> {
+  await apiFetch("/api/auth/logout", { method: "POST" });
+}
+
+
+------------------------------------------------
+FILE: ./apps/web/src/lib/config.ts
+------------------------------------------------
+export const API_URL =
+  process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
+
+
+------------------------------------------------
+FILE: ./apps/web/src/lib/cookies.ts
+------------------------------------------------
+export function getCookie(name: string): string | null {
+  if (typeof document === "undefined") {
+    return null;
+  }
+
+  const cookies = document.cookie.split(";").map((cookie) => cookie.trim());
+  for (const cookie of cookies) {
+    const separatorIndex = cookie.indexOf("=");
+    if (separatorIndex === -1) {
+      continue;
+    }
+
+    const key = cookie.slice(0, separatorIndex);
+    if (key !== name) {
+      continue;
+    }
+
+    return decodeURIComponent(cookie.slice(separatorIndex + 1));
+  }
+
+  return null;
+}
+
+
+------------------------------------------------
+FILE: ./apps/web/src/store/analysis-history.ts
+------------------------------------------------
+"use client";
+
+import { create } from "zustand";
+import type { AnalysisHistoryItem, AnalysisRecord } from "@algoforge/analysis";
+import { fetchAnalysisById, fetchAnalysesPage } from "@/lib/analyses";
+
+type AnalysisHistoryState = {
+  analysesById: Record<string, AnalysisRecord>;
+  historyById: Record<string, AnalysisHistoryItem>;
+  orderedHistoryIds: string[];
+  fetchedCursorKeys: string[];
+  nextCursor: string | null;
+  hasMore: boolean;
+  initialized: boolean;
+  isFetchingPage: boolean;
+  pageError: string | null;
+  activeAnalysisId: string | null;
+  activeDetailError: string | null;
+  reset: () => void;
+  cacheAnalysis: (analysis: AnalysisRecord) => void;
+  fetchInitialPage: () => Promise<void>;
+  fetchNextPage: () => Promise<void>;
+  fetchAnalysis: (analysisId: string) => Promise<AnalysisRecord>;
+  setActiveAnalysisId: (analysisId: string | null) => void;
+};
+
+const INITIAL_CURSOR_KEY = "__initial__";
+const pageRequests = new Map<string, Promise<void>>();
+const detailRequests = new Map<string, Promise<AnalysisRecord>>();
+let storeGeneration = 0;
+
+function sortHistoryIds(historyById: Record<string, AnalysisHistoryItem>): string[] {
+  return Object.values(historyById)
+    .sort((left, right) => {
+      const byDate =
+        new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime();
+
+      if (byDate !== 0) {
+        return byDate;
+      }
+
+      return right.id.localeCompare(left.id);
+    })
+    .map((item) => item.id);
+}
+
+function toHistoryItem(analysis: AnalysisRecord): AnalysisHistoryItem {
+  return {
+    id: analysis.id,
+    language: analysis.language,
+    complexity: analysis.result.complexity.time.worst,
+    suggestion: analysis.result.improvements[0]?.suggestion ?? null,
+    createdAt: analysis.createdAt,
+  };
+}
+
+function mergeHistoryItems(
+  historyById: Record<string, AnalysisHistoryItem>,
+  items: AnalysisHistoryItem[],
+) {
+  const nextHistoryById = { ...historyById };
+
+  for (const item of items) {
+    nextHistoryById[item.id] = item;
+  }
+
+  return {
+    historyById: nextHistoryById,
+    orderedHistoryIds: sortHistoryIds(nextHistoryById),
+  };
+}
+
+function createPageRequest(
+  cursor: string | null,
+  set: (
+    partial:
+      | Partial<AnalysisHistoryState>
+      | ((state: AnalysisHistoryState) => Partial<AnalysisHistoryState>),
+  ) => void,
+) {
+  const cursorKey = cursor ?? INITIAL_CURSOR_KEY;
+  const existingRequest = pageRequests.get(cursorKey);
+  const requestGeneration = storeGeneration;
+
+  if (existingRequest) {
+    return existingRequest;
+  }
+
+  const request = (async () => {
+    set({
+      isFetchingPage: true,
+      pageError: null,
+    });
+
+    try {
+      const response = await fetchAnalysesPage(cursor);
+      if (requestGeneration !== storeGeneration) {
+        return;
+      }
+
+      set((state) => {
+        const merged = mergeHistoryItems(state.historyById, response.data);
+        const nextFetchedCursorKeys = state.fetchedCursorKeys.includes(cursorKey)
+          ? state.fetchedCursorKeys
+          : [...state.fetchedCursorKeys, cursorKey];
+
+        return {
+          ...merged,
+          fetchedCursorKeys: nextFetchedCursorKeys,
+          nextCursor: response.meta.nextCursor,
+          hasMore: response.meta.hasMore,
+          initialized: true,
+        };
+      });
+    } catch (error) {
+      if (requestGeneration !== storeGeneration) {
+        return;
+      }
+
+      set({
+        pageError: error instanceof Error ? error.message : "Failed to load analyses.",
+      });
+      throw error;
+    } finally {
+      pageRequests.delete(cursorKey);
+      if (requestGeneration === storeGeneration && pageRequests.size === 0) {
+        set({ isFetchingPage: false });
+      }
+    }
+  })();
+
+  pageRequests.set(cursorKey, request);
+  return request;
+}
+
+function createDetailRequest(
+  analysisId: string,
+  set: (
+    partial:
+      | Partial<AnalysisHistoryState>
+      | ((state: AnalysisHistoryState) => Partial<AnalysisHistoryState>),
+  ) => void,
+) {
+  const existingRequest = detailRequests.get(analysisId);
+  const requestGeneration = storeGeneration;
+
+  if (existingRequest) {
+    return existingRequest;
+  }
+
+  const request = (async () => {
+    try {
+      const analysis = await fetchAnalysisById(analysisId);
+      if (requestGeneration !== storeGeneration) {
+        throw new Error("Analysis request expired.");
+      }
+
+      set((state) => {
+        const merged = mergeHistoryItems(state.historyById, [toHistoryItem(analysis)]);
+
+        return {
+          ...merged,
+          analysesById: {
+            ...state.analysesById,
+            [analysis.id]: analysis,
+          },
+          activeDetailError: null,
+        };
+      });
+
+      return analysis;
+    } catch (error) {
+      if (requestGeneration !== storeGeneration) {
+        throw error;
+      }
+
+      set({
+        activeDetailError:
+          error instanceof Error ? error.message : "Failed to load this analysis.",
+      });
+      throw error;
+    } finally {
+      detailRequests.delete(analysisId);
+    }
+  })();
+
+  detailRequests.set(analysisId, request);
+  return request;
+}
+
+export const useAnalysisHistoryStore = create<AnalysisHistoryState>((set, get) => ({
+  analysesById: {},
+  historyById: {},
+  orderedHistoryIds: [],
+  fetchedCursorKeys: [],
+  nextCursor: null,
+  hasMore: false,
+  initialized: false,
+  isFetchingPage: false,
+  pageError: null,
+  activeAnalysisId: null,
+  activeDetailError: null,
+  reset: () => {
+    storeGeneration += 1;
+    pageRequests.clear();
+    detailRequests.clear();
+    set({
+      analysesById: {},
+      historyById: {},
+      orderedHistoryIds: [],
+      fetchedCursorKeys: [],
+      nextCursor: null,
+      hasMore: false,
+      initialized: false,
+      isFetchingPage: false,
+      pageError: null,
+      activeAnalysisId: null,
+      activeDetailError: null,
+    });
+  },
+  cacheAnalysis: (analysis) =>
+    set((state) => {
+      const merged = mergeHistoryItems(state.historyById, [toHistoryItem(analysis)]);
+
+      return {
+        ...merged,
+        analysesById: {
+          ...state.analysesById,
+          [analysis.id]: analysis,
+        },
+        activeAnalysisId: analysis.id,
+      };
+    }),
+  fetchInitialPage: async () => {
+    const state = get();
+
+    if (state.initialized || state.fetchedCursorKeys.includes(INITIAL_CURSOR_KEY)) {
+      return;
+    }
+
+    await createPageRequest(null, set);
+  },
+  fetchNextPage: async () => {
+    const state = get();
+
+    if (!state.hasMore || !state.nextCursor) {
+      return;
+    }
+
+    if (state.fetchedCursorKeys.includes(state.nextCursor)) {
+      return;
+    }
+
+    await createPageRequest(state.nextCursor, set);
+  },
+  fetchAnalysis: async (analysisId) => {
+    const cached = get().analysesById[analysisId];
+
+    if (cached) {
+      set({
+        activeAnalysisId: analysisId,
+        activeDetailError: null,
+      });
+      return cached;
+    }
+
+    set({
+      activeAnalysisId: analysisId,
+      activeDetailError: null,
+    });
+
+    return createDetailRequest(analysisId, set);
+  },
+  setActiveAnalysisId: (analysisId) =>
+    set({
+      activeAnalysisId: analysisId,
+      activeDetailError: null,
+    }),
+}));
+
+
+------------------------------------------------
+FILE: ./apps/web/src/store/useAuthStore.ts
+------------------------------------------------
+import { create } from "zustand";
+import { persist } from "zustand/middleware";
+import { type SafeUser } from "@algoforge/analysis";
+
+interface AuthState {
+  user: SafeUser | null;
+  isLoading: boolean;
+  setUser: (user: SafeUser | null) => void;
+  setLoading: (isLoading: boolean) => void;
+  clearAuth: () => void;
+}
+
+export const useAuthStore = create<AuthState>()(
+  persist(
+    (set) => ({
+      user: null,
+      isLoading: true,
+      setUser: (user) => set({ user, isLoading: false }),
+      setLoading: (isLoading) => set({ isLoading }),
+      clearAuth: () => set({ user: null, isLoading: false }),
+    }),
+    {
+      name: "af-auth-storage",
+      partialize: (state) => ({ user: state.user }),
+    }
+  )
+);
+
+
+------------------------------------------------
+FILE: ./packages/analysis/src/index.ts
+------------------------------------------------
+export * from "./schema";
+
+
+------------------------------------------------
+FILE: ./packages/analysis/src/schema.ts
+------------------------------------------------
+import { z } from "zod";
+
+export const AnalysisLanguageSchema = z.enum(["javascript", "python"]);
+
+export const ComplexitySchema = z.object({
+  time: z.object({
+    best: z.string().min(1),
+    average: z.string().min(1),
+    worst: z.string().min(1),
+  }),
+  space: z.string().min(1),
+});
+
+export const BreakdownSchema = z.object({
+  approach: z.string().min(1),
+  steps: z.array(z.string().min(1)).min(1),
+});
+
+export const BottleneckSchema = z.object({
+  issue: z.string().min(1),
+  impact: z.string().min(1),
+  location: z.string().min(1).optional(),
+});
+
+export const ImprovementSchema = z.object({
+  suggestion: z.string().min(1),
+  expectedImpact: z.string().min(1),
+});
+
+export const ComparisonSchema = z.object({
+  originalVsOptimized: z.string().min(1),
+  improvementSummary: z.string().min(1),
+});
+
+export const SafeUserSchema = z.object({
+  id: z.string(),
+  name: z.string().nullable(),
+  username: z.string().nullable(),
+  avatarUrl: z.string().nullable().optional(),
+});
+
+export const AnalysisResultSchema = z.object({
+  summary: z.string().min(1),
+  complexity: ComplexitySchema,
+  breakdown: BreakdownSchema,
+  bottlenecks: z.array(BottleneckSchema),
+  antiPatterns: z.array(z.string().min(1)),
+  improvements: z.array(ImprovementSchema),
+  optimizedCode: z.string().min(1),
+  comparison: ComparisonSchema.optional(),
+  edgeCases: z.array(z.string().min(1)),
+  readabilityScore: z.number().min(0).max(100).optional(),
+  tags: z.array(z.string().min(1)).optional(),
+});
+
+export const CreateAnalysisInputSchema = z.object({
+  code: z.string().trim().min(1, "Code must be a non-empty string.").max(20000, "Code payload is too large."),
+  language: AnalysisLanguageSchema,
+});
+
+export const AnalysisRecordSchema = z.object({
+  id: z.string().min(1),
+  language: AnalysisLanguageSchema,
+  result: AnalysisResultSchema,
+  createdAt: z.string().datetime(),
+  creator: SafeUserSchema.optional(),
+});
+
+export const SharedAnalysisSchema = z.object({
+  id: z.string(),
+  code: z.string(),
+  language: AnalysisLanguageSchema,
+  result: AnalysisResultSchema,
+  createdAt: z.string().datetime(),
+  creator: SafeUserSchema.optional(),
+});
+
+export const AnalysisHistoryItemSchema = z.object({
+  id: z.string().min(1),
+  language: AnalysisLanguageSchema,
+  complexity: z.string().nullable(),
+  suggestion: z.string().nullable(),
+  createdAt: z.string().datetime(),
+});
+
+export const AnalysisHistoryMetaSchema = z.object({
+  nextCursor: z.string().nullable(),
+  hasMore: z.boolean(),
+});
+
+export const AnalysisHistoryResponseSchema = z.object({
+  data: z.array(AnalysisHistoryItemSchema),
+  meta: AnalysisHistoryMetaSchema,
+});
+
+export type SafeUser = z.infer<typeof SafeUserSchema>;
+export type AnalysisLanguage = z.infer<typeof AnalysisLanguageSchema>;
+export type AnalysisResult = z.infer<typeof AnalysisResultSchema>;
+export type CreateAnalysisInput = z.infer<typeof CreateAnalysisInputSchema>;
+export type AnalysisRecord = z.infer<typeof AnalysisRecordSchema>;
+export type SharedAnalysis = z.infer<typeof SharedAnalysisSchema>;
+export type AnalysisHistoryItem = z.infer<typeof AnalysisHistoryItemSchema>;
+export type AnalysisHistoryResponse = z.infer<typeof AnalysisHistoryResponseSchema>;
+
+
+------------------------------------------------
+FILE: ./packages/db/dist/index.d.ts
+------------------------------------------------
+import { PrismaClient } from "@prisma/client";
+export declare const prisma: PrismaClient<import("@prisma/client").Prisma.PrismaClientOptions, never, import("@prisma/client/runtime/library").DefaultArgs>;
+export * from "@prisma/client";
+
+
+------------------------------------------------
+FILE: ./packages/db/prisma/schema.prisma
+------------------------------------------------
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  USER
+  ADMIN
+}
+
+enum Difficulty {
+  beginner
+  intermediate
+  advanced
+}
+
+model User {
+  id        String    @id @default(cuid())
+  email     String?   @unique
+  username  String?   @unique
+  name      String?
+  image     String?
+  role      Role      @default(USER)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  accounts  Account[]
+  sessions  Session[]
+  analyses  Analysis[]
+
+  @@index([email])
+  @@index([username])
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  provider          String
+  providerAccountId String
+  user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+}
+
+model Session {
+  id             String    @id @default(cuid())
+  userId         String
+  tokenHash      String
+  expiresAt      DateTime
+  revokedAt      DateTime?
+  lastUsedAt     DateTime
+  ipAddress      String?
+  userAgent      String?
+  rotatedFromId  String?
+  user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([tokenHash])
+}
+
+model Analysis {
+  id           String   @id @default(cuid())
+  userId       String
+  code         String
+  language     String
+  complexity   String?
+  suggestion   String?
+  timeEstimate String?
+  result       Json
+  shareId      String?  @unique
+  isPublic     Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([shareId])
+}
+
+model Category {
+  id          String      @id
+  label       String
+  description String?
+  iconName    String?
+  sortOrder   Int         @default(0)
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+  algorithms  Algorithm[]
+
+  @@index([sortOrder])
+}
+
+model Algorithm {
+  id              String     @id @default(uuid())
+  slug            String     @unique
+  name            String
+  description     String
+  categoryId      String
+  forgeCode       Json
+  inputSchema     Json
+  guardRanges     Json
+  timeComplexity  String?
+  spaceComplexity String?
+  difficulty      Difficulty @default(beginner)
+  tags            String[]   @default([])
+  isPublished     Boolean    @default(false)
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+  category        Category   @relation(fields: [categoryId], references: [id])
+  snapshots       Snapshot[]
+
+  @@index([categoryId])
+  @@index([slug])
+  @@index([isPublished])
+}
+
+model Snapshot {
+  id              String    @id @default(uuid())
+  algorithmId     String
+  input           Json
+  steps           Json
+  executionTimeMs Int
+  createdAt       DateTime  @default(now())
+  algorithm       Algorithm @relation(fields: [algorithmId], references: [id], onDelete: Cascade)
+
+  @@index([algorithmId, createdAt])
+}
+
+------------------------------------------------
+FILE: ./packages/db/src/index.ts
+------------------------------------------------
+
+import { PrismaClient } from "@prisma/client";
+
+const globalForPrisma = globalThis as unknown as {
+    prisma: PrismaClient | undefined;
+};
+
+export const prisma =
+    globalForPrisma.prisma ??
+    new PrismaClient({
+        log:
+            process.env.NODE_ENV === "development"
+                ? ["warn", "error"]
+                : ["error"],
+    });
+
+// Test: prisma.snapshot.findMany()
+if (process.env.NODE_ENV !== "production") {
+    globalForPrisma.prisma = prisma;
+}
+
+export * from "@prisma/client";
+
+
+------------------------------------------------
+FILE: ./packages/forge/src/index.ts
+------------------------------------------------
+export * from "./types";
+export * from "./schemas";
+export * from "./recorder";
+
+------------------------------------------------
+FILE: ./packages/forge/src/recorder.ts
+------------------------------------------------
+import type {
+  Step,
+  StructureState,
+  StructureHighlight,
+  PointerMap,
+  ArrayState,
+  StackState,
+  QueueState,
+  GraphState,
+  TreeState,
+  TreeNode,
+} from "./types";
+
+export class ForgeRecorder {
+  private steps: Step[] = [];
+  private state: Record<string, StructureState> = {};
+  private highlights: Record<string, StructureHighlight> = {};
+  private pointers: PointerMap = {};
+  private message: string = "";
+  private phase: string = "";
+  private operationCount: number = 0;
+  private callDepth: number = 0;
+
+  init(type: StructureState["type"], id: string, value: unknown) {
+    switch (type) {
+      case "array":
+        this.state[id] = {
+          type: "array",
+          values: structuredClone(value) as (number | string)[],
+        };
+        break;
+      case "stack":
+        this.state[id] = { type: "stack", values: [] };
+        break;
+      case "queue":
+        this.state[id] = { type: "queue", values: [] };
+        break;
+      case "graph":
+        this.state[id] = {
+          type: "graph",
+          ...(structuredClone(value) as Omit<GraphState, "type">),
+        };
+        break;
+      case "tree":
+        this.state[id] = {
+          type: "tree",
+          root: structuredClone(value) as TreeNode,
+        };
+        break;
+      case "linkedList":
+        this.state[id] = {
+          type: "linkedList",
+          ...(structuredClone(value) as any),
+        };
+        break;
+    }
+  }
+
+  update(id: string, values: (number | string)[]) {
+    (this.state[id] as ArrayState).values = structuredClone(values);
+  }
+
+  swap(id: string, i: number, j: number) {
+    const arr = (this.state[id] as ArrayState).values;
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+    this.operationCount++;
+  }
+
+  markSorted(id: string, index: number) {
+    const s = this.state[id] as ArrayState;
+    s.sortedIndices = [...(s.sortedIndices ?? []), index];
+  }
+
+  markAllSorted(id: string) {
+    const s = this.state[id] as ArrayState;
+    s.sortedIndices = s.values.map((_, i) => i);
+  }
+
+  push(id: string, value: number | string) {
+    (this.state[id] as StackState).values.push(value);
+  }
+
+  pop(id: string) {
+    (this.state[id] as StackState).values.pop();
+  }
+
+  enqueue(id: string, value: number | string) {
+    (this.state[id] as QueueState).values.push(value);
+  }
+
+  dequeue(id: string) {
+    (this.state[id] as QueueState).values.shift();
+  }
+
+  visitNode(id: string, nodeId: string) {
+    const g = this.state[id] as GraphState;
+    g.visitedNodes = [...(g.visitedNodes ?? []), nodeId];
+    this.operationCount++;
+  }
+
+  visitEdge(id: string, from: string, to: string) {
+    const g = this.state[id] as GraphState;
+    g.visitedEdges = [...(g.visitedEdges ?? []), [from, to]];
+  }
+
+  setDistance(id: string, nodeId: string, dist: number) {
+    const g = this.state[id] as GraphState;
+    g.distances = { ...(g.distances ?? {}), [nodeId]: dist };
+  }
+
+  setPath(id: string, path: string[]) {
+    (this.state[id] as GraphState).path = path;
+  }
+
+  highlight(id: string, indices: number[], role: StructureHighlight["role"]) {
+    this.highlights[id] = { indices, role } as any;
+  }
+
+  highlightNode(id: string, nodeId: string, role: StructureHighlight["role"]) {
+    this.highlights[id] = { nodeId, role } as any;
+  }
+
+  highlightEdge(
+    id: string,
+    from: string,
+    to: string,
+    role: StructureHighlight["role"]
+  ) {
+    this.highlights[id] = { edge: [from, to], role } as any;
+  }
+
+  setPointers(id: string, ptrs: Record<string, number | string>) {
+    this.pointers[id] = ptrs;
+  }
+
+  setMessage(msg: string) {
+    this.message = msg;
+  }
+
+  setPhase(phase: string) {
+    this.phase = phase;
+  }
+
+  enterCall() {
+    this.callDepth++;
+  }
+
+  exitCall() {
+    this.callDepth--;
+  }
+
+  snap() {
+    this.steps.push({
+      index: this.steps.length,
+      state: structuredClone(this.state),
+      highlights: structuredClone(this.highlights),
+      pointers: structuredClone(this.pointers),
+      message: this.message,
+      phase: this.phase,
+      metadata: {
+        operationCount: this.operationCount,
+        callDepth: this.callDepth,
+      },
+    });
+    this.highlights = {};
+    this.message = "";
+  }
+
+  done() {
+    this.snap();
+  }
+
+  getSteps(): Step[] {
+    return this.steps;
+  }
+
+  _getQueueValues(id: string): (number | string)[] {
+    return (this.state[id] as QueueState).values;
+  }
+}
+
+------------------------------------------------
+FILE: ./packages/forge/src/schemas.ts
+------------------------------------------------
+import { z } from "zod";
+
+export const StructureTypeSchema = z.enum([
+  "array",
+  "linkedList",
+  "tree",
+  "graph",
+  "stack",
+  "queue",
+  "memory"
+]);
+
+export const DifficultySchema = z.enum(["beginner", "intermediate", "advanced"]);
+
+export const ForgeCodeSchema = z.object({
+  version: z.literal(1),
+  language: z.literal("js"),
+  body: z.string().min(1),
+  requiredStructures: z.array(StructureTypeSchema),
+});
+
+export const GuardRangesSchema = z.object({
+  array: z.object({
+    minLength: z.number().int().min(0),
+    maxLength: z.number().int().min(1),
+    minVal: z.number(),
+    maxVal: z.number(),
+    sorted: z.boolean().optional(),
+    unique: z.boolean().optional(),
+  }).optional(),
+  target: z.object({
+    min: z.number(),
+    max: z.number(),
+    existsInArray: z.boolean().optional(),
+  }).optional(),
+  graph: z.object({
+    minNodes: z.number().int().min(1),
+    maxNodes: z.number().int().min(1),
+    directed: z.boolean(),
+    weighted: z.boolean(),
+    minWeight: z.number().optional(),
+    maxWeight: z.number().optional(),
+    connected: z.boolean().optional(),
+    acyclic: z.boolean().optional(),
+  }).optional(),
+  tree: z.object({
+    minNodes: z.number().int().min(1),
+    maxNodes: z.number().int().min(1),
+    minVal: z.number(),
+    maxVal: z.number(),
+    balanced: z.boolean().optional(),
+  }).optional(),
+  startNode: z.enum(["first", "random"]).optional(),
+});
+
+export const CreateCategorySchema = z.object({
+  id: z.string().min(1).max(50),
+  label: z.string().min(1).max(100),
+  description: z.string().max(500).optional(),
+  iconName: z.string().max(50).optional(),
+  sortOrder: z.number().int().default(0),
+});
+
+export const UpdateCategorySchema = CreateCategorySchema.partial().omit({ id: true });
+
+export const CreateAlgorithmSchema = z.object({
+  slug: z.string().min(1).max(100).regex(/^[a-z0-9-]+$/),
+  name: z.string().min(1).max(200),
+  description: z.string().min(1).max(2000),
+  categoryId: z.string().min(1),
+  forgeCode: ForgeCodeSchema,
+  inputSchema: z.record(z.string(), z.unknown()),
+  guardRanges: GuardRangesSchema,
+  timeComplexity: z.string().max(100).optional(),
+  spaceComplexity: z.string().max(100).optional(),
+  difficulty: DifficultySchema.default("beginner"),
+  tags: z.array(z.string().max(50)).default([]),
+  isPublished: z.boolean().default(false),
+});
+
+export const UpdateAlgorithmSchema = CreateAlgorithmSchema.partial().omit({ slug: true });
+
+export const CreateSnapshotSchema = z.object({
+  algorithmId: z.string().uuid(),
+  input: z.record(z.string(), z.unknown()),
+});
+
+export const CategoryResponseSchema = z.object({
+  id: z.string(),
+  label: z.string(),
+  description: z.string().nullable(),
+  iconName: z.string().nullable(),
+  sortOrder: z.number(),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+});
+
+export const AlgorithmResponseSchema = z.object({
+  id: z.string(),
+  slug: z.string(),
+  name: z.string(),
+  description: z.string(),
+  categoryId: z.string(),
+  forgeCode: ForgeCodeSchema,
+  inputSchema: z.record(z.string(), z.unknown()),
+  guardRanges: GuardRangesSchema,
+  timeComplexity: z.string().nullable(),
+  spaceComplexity: z.string().nullable(),
+  difficulty: DifficultySchema,
+  tags: z.array(z.string()),
+  isPublished: z.boolean(),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+});
+
+export const SnapshotResponseSchema = z.object({
+  id: z.string(),
+  algorithmId: z.string(),
+  input: z.record(z.string(), z.unknown()),
+  steps: z.array(z.unknown()),
+  executionTimeMs: z.number(),
+  createdAt: z.string().datetime(),
+});
+
+export type CreateCategory = z.infer<typeof CreateCategorySchema>;
+export type UpdateCategory = z.infer<typeof UpdateCategorySchema>;
+export type CreateAlgorithm = z.infer<typeof CreateAlgorithmSchema>;
+export type UpdateAlgorithm = z.infer<typeof UpdateAlgorithmSchema>;
+export type CreateSnapshot = z.infer<typeof CreateSnapshotSchema>;
+export type CategoryResponse = z.infer<typeof CategoryResponseSchema>;
+export type AlgorithmResponse = z.infer<typeof AlgorithmResponseSchema>;
+export type SnapshotResponse = z.infer<typeof SnapshotResponseSchema>;
+
+------------------------------------------------
+FILE: ./packages/forge/src/types.ts
+------------------------------------------------
+export type StructureType =
+  | "array"
+  | "linkedList"
+  | "tree"
+  | "graph"
+  | "stack"
+  | "queue"
+  | "memory";
+
+export type HighlightRole =
+  | "comparing" | "swapped" | "found" | "notFound"
+  | "visiting"  | "visited" | "done"
+  | "current"   | "sorted"  | "pivot"
+  | "lo"        | "hi"      | "mid"
+  | "traversing"| "relaxed" | "path"
+  | "inserted"  | "deleted" | "rotated"
+  | "active"    | "inactive";
+
+export interface ArrayState {
+  type: "array";
+  values: (number | string | null)[];
+  sortedIndices?: number[];
+  labels?: Record<number, string>;
+}
+
+export interface LinkedListState {
+  type: "linkedList";
+  nodes: { id: string; value: number | string; next: string | null }[];
+  headId: string | null;
+}
+
+export interface TreeNode {
+  id: string;
+  value: number | string;
+  left: TreeNode | null;
+  right: TreeNode | null;
+  height?: number;
+  color?: "red" | "black";
+}
+
+export interface TreeState {
+  type: "tree";
+  root: TreeNode | null;
+}
+
+export interface GraphNode {
+  id: string;
+  label?: string;
+  x?: number;
+  y?: number;
+}
+
+export interface GraphEdge {
+  id: string;
+  source: string;
+  target: string;
+  weight?: number;
+}
+
+export interface GraphState {
+  type: "graph";
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+  directed: boolean;
+  weighted: boolean;
+  visitedNodes?: string[];
+  visitedEdges?: [string, string][];
+  distances?: Record<string, number>;
+  path?: string[];
+}
+
+export interface StackState {
+  type: "stack";
+  values: (number | string)[];
+  label?: string;
+}
+
+export interface QueueState {
+  type: "queue";
+  values: (number | string)[];
+  label?: string;
+}
+
+export interface MemoryFrame {
+  id: string;
+  label: string;
+  slots: { name: string; value: unknown }[];
+  role: HighlightRole;
+}
+
+export interface MemoryState {
+  type: "memory";
+  frames: MemoryFrame[];
+}
+
+export type StructureState =
+  | ArrayState
+  | LinkedListState
+  | TreeState
+  | GraphState
+  | StackState
+  | QueueState
+  | MemoryState;
+
+export interface ArrayHighlight {
+  indices: number[];
+  role: HighlightRole;
+}
+
+export interface GraphHighlight {
+  nodeId?: string;
+  edge?: [string, string];
+  role: HighlightRole;
+}
+
+export interface TreeHighlight {
+  nodeId: string;
+  role: HighlightRole;
+}
+
+export type StructureHighlight = ArrayHighlight | GraphHighlight | TreeHighlight;
+
+export interface PointerMap {
+  [structureId: string]: Record<string, number | string>;
+}
+
+export interface Step {
+  index: number;
+  state: Record<string, StructureState>;
+  highlights: Record<string, StructureHighlight>;
+  pointers: PointerMap;
+  message: string;
+  phase?: string;
+  metadata?: {
+    lineNumber?: number;
+    operationCount?: number;
+    callDepth?: number;
+  };
+}
+
+export interface ForgeCode {
+  version: 1;
+  language: "js";
+  body: string;
+  requiredStructures: StructureType[];
+}
+
+export interface GuardRanges {
+  array?: {
+    minLength: number;
+    maxLength: number;
+    minVal: number;
+    maxVal: number;
+    sorted?: boolean;
+    unique?: boolean;
+  };
+  target?: { min: number; max: number; existsInArray?: boolean };
+  graph?: {
+    minNodes: number;
+    maxNodes: number;
+    directed: boolean;
+    weighted: boolean;
+    minWeight?: number;
+    maxWeight?: number;
+    connected?: boolean;
+    acyclic?: boolean;
+  };
+  tree?: {
+    minNodes: number;
+    maxNodes: number;
+    minVal: number;
+    maxVal: number;
+    balanced?: boolean;
+  };
+  startNode?: "first" | "random";
+}
+
+export interface AlgorithmInput {
+  array?: (number | string)[];
+  target?: number | string;
+  graph?: { nodes: GraphNode[]; edges: GraphEdge[] };
+  startNode?: string;
+  tree?: TreeNode | null;
+  matrix?: number[][];
+}
+
+export type Difficulty = "beginner" | "intermediate" | "advanced";
+

@@ -54,7 +54,7 @@ export const GuardRangesSchema = z.object({
 });
 
 export const CreateCategorySchema = z.object({
-  id: z.string().min(1).max(50),
+  id: z.string().min(1).max(50).optional(), // ✅ optional
   label: z.string().min(1).max(100),
   description: z.string().max(500).optional(),
   iconName: z.string().max(50).optional(),
