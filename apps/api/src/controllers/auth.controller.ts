@@ -12,7 +12,6 @@ import {
   setAuthCookies,
   setOAuthStateCookie,
 } from "../utils/cookies";
-import { getToken } from "../middleware/auth";
 import { ensureString } from "../validation/common";
 
 class AuthController {
@@ -49,8 +48,14 @@ class AuthController {
     }
   });
 
-  getSession = asyncHandler(async (req: Request, res: Response) => {
-    res.json({ user: req.auth!.user });
+  getMe = asyncHandler(async (req: Request, res: Response) => {
+    const user = await userService.getUserById(req.auth!.user.id);
+
+    if (!user) {
+      throw AppError.notFound("User not found.");
+    }
+
+    res.json({ user });
   });
 
   refreshSession = asyncHandler(async (req: Request, res: Response) => {
@@ -100,18 +105,6 @@ class AuthController {
     });
 
     res.json({ users });
-  });
-
-  getMe = asyncHandler(async (req: Request, res: Response) => {
-    const accessToken = getToken(req);
-    
-    if (!accessToken) {
-      res.json({ user: null });
-      return;
-    }
-
-    const user = await userService.getUserByToken(accessToken);
-    res.json({ user });
   });
 }
 

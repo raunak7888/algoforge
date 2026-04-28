@@ -1,17 +1,17 @@
 import type { AnalysisLanguage } from "@algoforge/analysis";
 
 const LANGUAGE_LABELS: Record<AnalysisLanguage, string> = {
-    javascript: "JavaScript",
-    python: "Python",
+  javascript: "JavaScript",
+  python: "Python",
 };
 
 export function buildAnalysisPrompt(input: {
-    code: string;
-    language: AnalysisLanguage;
+  code: string;
+  language: AnalysisLanguage;
 }): string {
-    const languageLabel = LANGUAGE_LABELS[input.language];
+  const languageLabel = LANGUAGE_LABELS[input.language];
 
-    return `
+  return `
 You are a strict JSON generator.
 
 Return ONLY valid JSON. No markdown, no explanation, no extra text.

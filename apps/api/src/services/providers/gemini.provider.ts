@@ -1,7 +1,11 @@
 import { GoogleGenAI } from "@google/genai";
 import { env } from "../../config/env";
 import { AppError } from "../../utils/app-error";
-import type { AIGenerateRequest, AIGenerateResponse, AIProvider } from "./ai-provider";
+import type {
+  AIGenerateRequest,
+  AIGenerateResponse,
+  AIProvider,
+} from "./ai-provider";
 
 export class GeminiProvider implements AIProvider {
   readonly name = "gemini";
@@ -35,7 +39,7 @@ export class GeminiProvider implements AIProvider {
       const text = response.text?.trim();
 
       if (!text) {
-        throw AppError.badGateway("Empty response from AI provider.");
+        throw AppError.badGateway("Empty response from Gemini provider.");
       }
 
       const message = {
@@ -57,7 +61,7 @@ export class GeminiProvider implements AIProvider {
         console.error("[AI][gemini]", error);
       }
 
-      throw AppError.badGateway("AI provider request failed.");
+      throw AppError.badGateway("Gemini provider request failed.");
     }
   }
 }

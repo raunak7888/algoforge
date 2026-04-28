@@ -37,7 +37,9 @@ class AlgorithmController {
     });
 
     create = asyncHandler(async (req: Request, res: Response) => {
+        console.log(req.body)
         const input = parseCreateAlgorithm(req.body);
+        console.log(input)
         const createdAlgorithm = await algorithmService.createAlgorithm(input);
         res.status(201).json(createdAlgorithm);
     });

@@ -1,10 +1,14 @@
-import { AnalysisResultSchema, type AnalysisLanguage, type AnalysisResult } from "@algoforge/analysis";
+import {
+  AnalysisResultSchema,
+  type AnalysisLanguage,
+  type AnalysisResult,
+} from "@algoforge/analysis";
 import { env } from "../config/env";
 import { buildAnalysisPrompt } from "../prompts/analysis.prompt";
 import { AppError } from "../utils/app-error";
-import type { AIMessage } from "./providers/ai-provider";
-import type { AIProvider } from "./providers/ai-provider";
+import type { AIMessage, AIProvider } from "./providers/ai-provider";
 import { GeminiProvider } from "./providers/gemini.provider";
+import { OpenRouterProvider } from "./providers/openrouter.provider";
 
 type AnalyzeCodeInput = {
   code: string;
@@ -22,6 +26,7 @@ class AIService {
         content: prompt,
       },
     ];
+
     this.logInfo(`Using provider "${this.provider.name}" for analysis.`);
 
     try {
@@ -43,7 +48,10 @@ class AIService {
     }
   }
 
-  private async withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+  private async withTimeout<T>(
+    promise: Promise<T>,
+    timeoutMs: number,
+  ): Promise<T> {
     let timeoutId: NodeJS.Timeout | undefined;
 
     try {
@@ -76,7 +84,9 @@ class AIService {
       "issues" in error &&
       Array.isArray((error as { issues?: unknown[] }).issues)
     ) {
-      return AppError.badGateway("AI provider returned an invalid analysis payload.");
+      return AppError.badGateway(
+        "AI provider returned an invalid analysis payload.",
+      );
     }
 
     return AppError.badGateway("AI analysis failed.");
@@ -113,11 +123,23 @@ function sanitizeAiJson(value: string): string {
   return trimmed;
 }
 
-function createGeminiProvider(): AIProvider {
-  return new GeminiProvider({
-    apiKey: env.geminiApiKey,
-    model: env.ai.model,
-  });
+function createProvider(): AIProvider {
+  switch (env.ai.provider) {
+    case "openrouter":
+      return new OpenRouterProvider({
+        apiKeys: env.openRouter.apiKeys,
+        freeModels: env.openRouter.freeModels,
+        baseUrl: env.openRouter.baseUrl,
+        appName: env.openRouter.appName,
+        siteUrl: env.openRouter.siteUrl,
+      });
+    case "gemini":
+    default:
+      return new GeminiProvider({
+        apiKey: env.geminiApiKey,
+        model: env.ai.model,
+      });
+  }
 }
 
-export const aiService = new AIService(createGeminiProvider());
+export const aiService = new AIService(createProvider());

@@ -13,21 +13,21 @@ router.post(
   requireAuth,
   requireRoles(Role.ADMIN),
   requireCsrf,
-  categoryController.create
+  categoryController.create,
 );
 router.patch(
   "/:id",
   requireAuth,
   requireRoles(Role.ADMIN),
   requireCsrf,
-  categoryController.update
+  categoryController.update,
 );
 router.delete(
   "/:id",
   requireAuth,
   requireRoles(Role.ADMIN),
   requireCsrf,
-  categoryController.delete
+  categoryController.delete,
 );
 
 export default router;

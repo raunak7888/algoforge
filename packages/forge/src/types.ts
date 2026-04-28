@@ -23,9 +23,15 @@ export interface ArrayState {
   labels?: Record<number, string>;
 }
 
+export interface LinkedListNode {
+  id: string;
+  value: number | string;
+  next: string | null;
+}
+
 export interface LinkedListState {
   type: "linkedList";
-  nodes: { id: string; value: number | string; next: string | null }[];
+  nodes: LinkedListNode[];
   headId: string | null;
 }
 

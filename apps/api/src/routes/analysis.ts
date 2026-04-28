@@ -8,6 +8,11 @@ const router = Router();
 router.get("/", requireAuth, analysisController.listAnalyses);
 router.get("/:id", requireAuth, analysisController.getAnalysisById);
 router.post("/", requireAuth, requireCsrf, analysisController.createAnalysis);
-router.post("/:id/share", requireAuth, requireCsrf, analysisController.shareAnalysis);
+router.post(
+  "/:id/share",
+  requireAuth,
+  requireCsrf,
+  analysisController.shareAnalysis,
+);
 
 export default router;

@@ -9,6 +9,7 @@ import type {
   GraphState,
   TreeState,
   TreeNode,
+  LinkedListState,
 } from "./types";
 
 export class ForgeRecorder {
@@ -21,7 +22,7 @@ export class ForgeRecorder {
   private operationCount: number = 0;
   private callDepth: number = 0;
 
-  init(type: StructureState["type"], id: string, value: unknown) {
+  init(type: StructureState["type"], id: string, value: unknown): void {
     switch (type) {
       case "array":
         this.state[id] = {
@@ -47,109 +48,115 @@ export class ForgeRecorder {
           root: structuredClone(value) as TreeNode,
         };
         break;
-      case "linkedList":
+      case "linkedList": {
+        const cloned = structuredClone(value) as Omit<LinkedListState, "type">;
         this.state[id] = {
           type: "linkedList",
-          ...(structuredClone(value) as any),
+          nodes: cloned.nodes,
+          headId: cloned.headId,
         };
+        break;
+      }
+      case "memory":
+        this.state[id] = { type: "memory", frames: [] };
         break;
     }
   }
 
-  update(id: string, values: (number | string)[]) {
+  update(id: string, values: (number | string)[]): void {
     (this.state[id] as ArrayState).values = structuredClone(values);
   }
 
-  swap(id: string, i: number, j: number) {
+  swap(id: string, i: number, j: number): void {
     const arr = (this.state[id] as ArrayState).values;
     [arr[i], arr[j]] = [arr[j], arr[i]];
     this.operationCount++;
   }
 
-  markSorted(id: string, index: number) {
+  markSorted(id: string, index: number): void {
     const s = this.state[id] as ArrayState;
     s.sortedIndices = [...(s.sortedIndices ?? []), index];
   }
 
-  markAllSorted(id: string) {
+  markAllSorted(id: string): void {
     const s = this.state[id] as ArrayState;
     s.sortedIndices = s.values.map((_, i) => i);
   }
 
-  push(id: string, value: number | string) {
+  push(id: string, value: number | string): void {
     (this.state[id] as StackState).values.push(value);
   }
 
-  pop(id: string) {
+  pop(id: string): void {
     (this.state[id] as StackState).values.pop();
   }
 
-  enqueue(id: string, value: number | string) {
+  enqueue(id: string, value: number | string): void {
     (this.state[id] as QueueState).values.push(value);
   }
 
-  dequeue(id: string) {
+  dequeue(id: string): void {
     (this.state[id] as QueueState).values.shift();
   }
 
-  visitNode(id: string, nodeId: string) {
+  visitNode(id: string, nodeId: string): void {
     const g = this.state[id] as GraphState;
     g.visitedNodes = [...(g.visitedNodes ?? []), nodeId];
     this.operationCount++;
   }
 
-  visitEdge(id: string, from: string, to: string) {
+  visitEdge(id: string, from: string, to: string): void {
     const g = this.state[id] as GraphState;
     g.visitedEdges = [...(g.visitedEdges ?? []), [from, to]];
   }
 
-  setDistance(id: string, nodeId: string, dist: number) {
+  setDistance(id: string, nodeId: string, dist: number): void {
     const g = this.state[id] as GraphState;
     g.distances = { ...(g.distances ?? {}), [nodeId]: dist };
   }
 
-  setPath(id: string, path: string[]) {
+  setPath(id: string, path: string[]): void {
     (this.state[id] as GraphState).path = path;
   }
 
-  highlight(id: string, indices: number[], role: StructureHighlight["role"]) {
-    this.highlights[id] = { indices, role } as any;
+  highlight(id: string, indices: number[], role: StructureHighlight["role"]): void {
+    this.highlights[id] = { indices, role } as StructureHighlight;
   }
 
-  highlightNode(id: string, nodeId: string, role: StructureHighlight["role"]) {
-    this.highlights[id] = { nodeId, role } as any;
+  highlightNode(id: string, nodeId: string, role: StructureHighlight["role"]): void {
+    this.highlights[id] = { nodeId, role } as StructureHighlight;
   }
 
   highlightEdge(
     id: string,
     from: string,
     to: string,
-    role: StructureHighlight["role"]
-  ) {
-    this.highlights[id] = { edge: [from, to], role } as any;
+    role: StructureHighlight["role"],
+  ): void {
+    this.highlights[id] = { edge: [from, to], role } as StructureHighlight;
   }
 
-  setPointers(id: string, ptrs: Record<string, number | string>) {
+  setPointers(id: string, ptrs: Record<string, number | string>): void {
     this.pointers[id] = ptrs;
   }
 
-  setMessage(msg: string) {
+  setMessage(msg: string): void {
     this.message = msg;
   }
 
-  setPhase(phase: string) {
+  setPhase(phase: string): void {
     this.phase = phase;
   }
 
-  enterCall() {
+  enterCall(): void {
     this.callDepth++;
   }
 
-  exitCall() {
+  exitCall(): void {
     this.callDepth--;
   }
 
-  snap() {
+  snap(): void {
     this.steps.push({
       index: this.steps.length,
       state: structuredClone(this.state),
@@ -166,7 +173,7 @@ export class ForgeRecorder {
     this.message = "";
   }
 
-  done() {
+  done(): void {
     this.snap();
   }
 

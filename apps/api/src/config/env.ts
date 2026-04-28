@@ -2,6 +2,9 @@ import dotenv from "dotenv";
 
 dotenv.config();
 
+const AI_PROVIDERS = ["gemini", "openrouter"] as const;
+type AIProvider = (typeof AI_PROVIDERS)[number];
+
 function requireEnv(name: string): string {
   const value = process.env[name];
 
@@ -64,6 +67,7 @@ const port = parseInteger("PORT", 4000);
 const nodeEnv = process.env.NODE_ENV ?? "development";
 const isProduction = nodeEnv === "production";
 const apiBaseUrl = process.env.API_BASE_URL ?? `http://localhost:${port}`;
+const aiProvider = parseStringEnum("AI_PROVIDER", AI_PROVIDERS, "gemini");
 
 export const env = {
   nodeEnv,
@@ -82,7 +86,7 @@ export const env = {
   authAudience: process.env.AUTH_AUDIENCE ?? "algoforge-web",
   geminiApiKey: requireEnv("GEMINI_API_KEY"),
   ai: {
-    provider: parseStringEnum("AI_PROVIDER", ["gemini"], "gemini"),
+    provider: aiProvider as AIProvider,
     model: process.env.AI_MODEL ?? "gemini-2.0-flash",
     timeoutMs: parseInteger("AI_TIMEOUT_MS", 15000),
     maxRetries: parseInteger("AI_MAX_RETRIES", 1),

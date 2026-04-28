@@ -7,7 +7,11 @@ type AuthCookieValues = {
   csrfToken: string;
 };
 
-function buildCookieOptions(maxAgeMs: number, httpOnly: boolean, path = "/") {
+function buildCookieOptions(
+  maxAgeMs: number,
+  httpOnly: boolean,
+  path = "/",
+) {
   return {
     httpOnly,
     secure: env.isProduction,
@@ -20,21 +24,15 @@ function buildCookieOptions(maxAgeMs: number, httpOnly: boolean, path = "/") {
 
 export function getCookie(req: Request, name: string): string | null {
   const header = req.headers.cookie;
-  if (!header) {
-    return null;
-  }
+  if (!header) return null;
 
   const cookies = header.split(";").map((cookie) => cookie.trim());
   for (const cookie of cookies) {
     const separatorIndex = cookie.indexOf("=");
-    if (separatorIndex === -1) {
-      continue;
-    }
+    if (separatorIndex === -1) continue;
 
     const key = cookie.slice(0, separatorIndex);
-    if (key !== name) {
-      continue;
-    }
+    if (key !== name) continue;
 
     return decodeURIComponent(cookie.slice(separatorIndex + 1));
   }
@@ -51,7 +49,11 @@ export function setAuthCookies(res: Response, values: AuthCookieValues): void {
   res.cookie(
     authCookies.refreshToken,
     values.refreshToken,
-    buildCookieOptions(env.refreshTokenTtlDays * 24 * 60 * 60 * 1000, true, "/api/auth"),
+    buildCookieOptions(
+      env.refreshTokenTtlDays * 24 * 60 * 60 * 1000,
+      true,
+      "/api/auth",
+    ),
   );
   res.cookie(
     authCookies.csrfToken,

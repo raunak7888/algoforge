@@ -38,12 +38,11 @@ function buildSignOptions(expiresIn: SignOptions["expiresIn"]): SignOptions {
   };
 }
 
-export function signAccessToken(payload: BaseTokenPayload & { role: Role }): string {
+export function signAccessToken(
+  payload: BaseTokenPayload & { role: Role },
+): string {
   return jwt.sign(
-    {
-      ...payload,
-      type: "access",
-    },
+    { ...payload, type: "access" },
     env.jwtAccessSecret,
     buildSignOptions(`${env.accessTokenTtlMinutes}m`),
   );
@@ -51,10 +50,7 @@ export function signAccessToken(payload: BaseTokenPayload & { role: Role }): str
 
 export function signRefreshToken(payload: BaseTokenPayload): string {
   return jwt.sign(
-    {
-      ...payload,
-      type: "refresh",
-    },
+    { ...payload, type: "refresh" },
     env.jwtRefreshSecret,
     buildSignOptions(`${env.refreshTokenTtlDays}d`),
   );

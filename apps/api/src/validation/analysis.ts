@@ -1,11 +1,16 @@
-import { CreateAnalysisInputSchema, type CreateAnalysisInput } from "@algoforge/analysis";
+import {
+  CreateAnalysisInputSchema,
+  type CreateAnalysisInput,
+} from "@algoforge/analysis";
 import { AppError } from "../utils/app-error";
 
 export type AnalysisInput = CreateAnalysisInput;
+
 export type AnalysisHistoryQuery = {
   cursor: string | null;
   limit: number;
 };
+
 export type AnalysisCursor = {
   createdAt: string;
   id: string;
@@ -18,13 +23,17 @@ export function parseAnalysisInput(value: unknown): AnalysisInput {
   const result = CreateAnalysisInputSchema.safeParse(value);
 
   if (!result.success) {
-    throw AppError.badRequest(result.error.issues[0]?.message ?? "Invalid analysis request.");
+    throw AppError.badRequest(
+      result.error.issues[0]?.message ?? "Invalid analysis request.",
+    );
   }
 
   return result.data;
 }
 
-export function parseAnalysisHistoryQuery(value: unknown): AnalysisHistoryQuery {
+export function parseAnalysisHistoryQuery(
+  value: unknown,
+): AnalysisHistoryQuery {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return {
       cursor: null,
@@ -45,12 +54,13 @@ export function parseAnalysisHistoryQuery(value: unknown): AnalysisHistoryQuery 
     if (typeof cursorValue !== "string" || !cursorValue.trim()) {
       throw AppError.badRequest("Cursor must be a non-empty string.");
     }
-
     cursor = cursorValue.trim();
   }
 
   const rawLimit =
-    typeof limitValue === "undefined" ? DEFAULT_ANALYSIS_PAGE_SIZE : Number(limitValue);
+    typeof limitValue === "undefined"
+      ? DEFAULT_ANALYSIS_PAGE_SIZE
+      : Number(limitValue);
 
   if (!Number.isInteger(rawLimit)) {
     throw AppError.badRequest("Limit must be an integer.");

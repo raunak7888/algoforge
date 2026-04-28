@@ -54,7 +54,11 @@ export const AnalysisResultSchema = z.object({
 });
 
 export const CreateAnalysisInputSchema = z.object({
-  code: z.string().trim().min(1, "Code must be a non-empty string.").max(20000, "Code payload is too large."),
+  code: z
+    .string()
+    .trim()
+    .min(1, "Code must be a non-empty string.")
+    .max(20000, "Code payload is too large."),
   language: AnalysisLanguageSchema,
 });
 
