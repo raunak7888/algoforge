@@ -1,3 +1,5 @@
+// filename: packages/forge/src/schemas.ts
+
 import { z } from "zod";
 
 export const StructureTypeSchema = z.enum([
@@ -63,85 +65,120 @@ export const GuardRangesSchema = z.object({
 
 export const InputSchema = z.record(z.string(), z.unknown());
 
-export const CreateCategorySchema = z.object({
-  id: z.string().min(1).max(50).optional(),
-  label: z.string().min(1).max(100),
-  description: z.string().max(500).optional(),
-  iconName: z.string().max(50).optional(),
-  sortOrder: z.number().int().default(0),
+// Structures that require explicit guard ranges. Stack, queue, linkedList,
+// and memory do not have configurable input constraints.
+const GUARDED_STRUCTURES = ["array", "graph", "tree"] as const;
+type GuardedStructure = (typeof GUARDED_STRUCTURES)[number];
+
+function crossValidateGuardRanges(
+  requiredStructures: string[],
+  guardRanges: z.infer<typeof GuardRangesSchema>,
+  ctx: z.RefinementCtx,
+  basePath: (string | number)[],
+): void {
+  for (const structure of requiredStructures) {
+    if (!GUARDED_STRUCTURES.includes(structure as GuardedStructure)) continue;
+    const key = structure as GuardedStructure;
+    if (!guardRanges[key]) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `forge.guardRanges.${key} is required when forge.forgeCode.requiredStructures includes "${key}".`,
+        path: [...basePath, key],
+      });
+    }
+  }
+}
+
+const DisplayCodeEntrySchema = z.object({
+  language: z.string().min(1),
+  code: z.string().min(1),
 });
 
-export const UpdateCategorySchema = CreateCategorySchema.partial().omit({ id: true });
+export const CreateAlgorithmSchema = z
+  .object({
+    slug: z.string().min(1).max(100).regex(/^[a-z0-9-]+$/),
+    name: z.string().min(1).max(200),
+    description: z.string().min(1).max(2000),
+    categoryId: z.string().min(1),
+    difficulty: DifficultySchema.default("beginner"),
+    isPublished: z.boolean().default(false).optional(),
 
-export const CreateAlgorithmSchema = z.object({
-  slug: z.string().min(1).max(100).regex(/^[a-z0-9-]+$/),
-  name: z.string().min(1).max(200),
-  description: z.string().min(1).max(2000),
-  categoryId: z.string().min(1),
-  difficulty: DifficultySchema.default("beginner"),
-  isPublished: z.boolean().default(false).optional(),
-
-  complexity: z.object({
-    time: z.object({
-      best: z.string().min(1),
-      average: z.string().min(1),
-      worst: z.string().min(1),
+    complexity: z.object({
+      time: z.object({
+        best: z.string().min(1),
+        average: z.string().min(1),
+        worst: z.string().min(1),
+      }),
+      space: z.string().min(1),
     }),
-    space: z.string().min(1),
-  }),
 
-  displayCode: z.object({
-    code: z.string().min(1),
-    language: z.string().min(1),
-  }),
+    // Accepts multiple display-code variants (e.g. js + python).
+    // Must include at least one entry. Forge code is always JS and separate.
+    displayCodes: z.array(DisplayCodeEntrySchema).min(1),
 
-  forge: z.object({
-    forgeCode: ForgeCodeSchema,
-    inputSchema: InputSchema,
-    guardRanges: GuardRangesSchema,
-  }),
+    forge: z.object({
+      forgeCode: ForgeCodeSchema,
+      inputSchema: InputSchema,
+      guardRanges: GuardRangesSchema,
+    }),
 
-  tags: z.array(z.string().min(1)),
-});
+    tags: z.array(z.string().min(1)),
+  })
+  .superRefine((data, ctx) => {
+    crossValidateGuardRanges(
+      data.forge.forgeCode.requiredStructures,
+      data.forge.guardRanges,
+      ctx,
+      ["forge", "guardRanges"],
+    );
+  });
 
-export const UpdateAlgorithmSchema = z.object({
-  slug: z.string().min(1).max(100).regex(/^[a-z0-9-]+$/).optional(),
-  name: z.string().min(1).max(200).optional(),
-  description: z.string().min(1).max(2000).optional(),
-  categoryId: z.string().min(1).optional(),
-  difficulty: DifficultySchema.optional(),
-  isPublished: z.boolean().optional(),
+export const UpdateAlgorithmSchema = z
+  .object({
+    slug: z.string().min(1).max(100).regex(/^[a-z0-9-]+$/).optional(),
+    name: z.string().min(1).max(200).optional(),
+    description: z.string().min(1).max(2000).optional(),
+    categoryId: z.string().min(1).optional(),
+    difficulty: DifficultySchema.optional(),
+    isPublished: z.boolean().optional(),
 
-  complexity: z
-    .object({
-      time: z
-        .object({
-          best: z.string().min(1).optional(),
-          average: z.string().min(1).optional(),
-          worst: z.string().min(1).optional(),
-        })
-        .optional(),
-      space: z.string().min(1).optional(),
-    })
-    .optional(),
+    complexity: z
+      .object({
+        time: z
+          .object({
+            best: z.string().min(1).optional(),
+            average: z.string().min(1).optional(),
+            worst: z.string().min(1).optional(),
+          })
+          .optional(),
+        space: z.string().min(1).optional(),
+      })
+      .optional(),
 
-  displayCode: z
-    .object({
-      code: z.string().min(1).optional(),
-      language: z.string().min(1).optional(),
-    })
-    .optional(),
+    // When provided, replaces all display-code entries (same pattern as tags).
+    displayCodes: z.array(DisplayCodeEntrySchema).min(1).optional(),
 
-  forge: z
-    .object({
-      forgeCode: ForgeCodeSchema.optional(),
-      inputSchema: InputSchema.optional(),
-      guardRanges: GuardRangesSchema.optional(),
-    })
-    .optional(),
+    forge: z
+      .object({
+        forgeCode: ForgeCodeSchema.optional(),
+        inputSchema: InputSchema.optional(),
+        guardRanges: GuardRangesSchema.optional(),
+      })
+      .optional(),
 
-  tags: z.array(z.string().min(1)).optional(),
-});
+    tags: z.array(z.string().min(1)).optional(),
+  })
+  .superRefine((data, ctx) => {
+    // Only cross-validate when both sides of forge are supplied in the update.
+    const structures = data.forge?.forgeCode?.requiredStructures;
+    const guardRanges = data.forge?.guardRanges;
+    if (structures && guardRanges) {
+      crossValidateGuardRanges(structures, guardRanges, ctx, [
+        "forge",
+        "guardRanges",
+      ]);
+    }
+  });
 
 export const CategoryResponseSchema = z.object({
   id: z.string(),
@@ -189,12 +226,7 @@ export const AlgorithmDetailSchema = z.object({
       code: z.string(),
     })
     .nullable(),
-  tags: z.array(
-    z.object({
-      id: z.string(),
-      label: z.string(),
-    }),
-  ),
+  tags: z.array(z.object({ id: z.string(), label: z.string() })),
   forge: z
     .object({
       forgeCode: ForgeCodeSchema,
@@ -222,6 +254,18 @@ export const AlgorithmExecutionSchema = z.union([
     message: z.string(),
   }),
 ]);
+
+export const CreateCategorySchema = z.object({
+  id: z.string().min(1).max(50).optional(),
+  label: z.string().min(1).max(100),
+  description: z.string().max(500).optional(),
+  iconName: z.string().max(50).optional(),
+  sortOrder: z.number().int().default(0),
+});
+
+export const UpdateCategorySchema = CreateCategorySchema.partial().omit({
+  id: true,
+});
 
 export type CreateCategory = z.infer<typeof CreateCategorySchema>;
 export type UpdateCategory = z.infer<typeof UpdateCategorySchema>;

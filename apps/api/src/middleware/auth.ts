@@ -1,3 +1,5 @@
+//# filename: apps/api/src/middleware/auth.ts
+
 import { NextFunction, Request, Response } from "express";
 import { Role } from "@algoforge/db";
 import { authCookies } from "../config/env";
@@ -24,11 +26,9 @@ export async function requireAuth(
 ): Promise<void> {
   try {
     const accessToken = getToken(req);
-
     if (!accessToken) {
       return next(AppError.unauthorized("Authentication required."));
     }
-
     req.auth = await authService.authenticateAccessToken(accessToken);
     next();
   } catch (error) {
@@ -41,11 +41,9 @@ export function requireRoles(...roles: Role[]) {
     if (!req.auth) {
       return next(AppError.unauthorized("Authentication required."));
     }
-
     if (!roles.includes(req.auth.user.role)) {
       return next(AppError.forbidden("Insufficient permissions."));
     }
-
     next();
   };
 }

@@ -1,3 +1,5 @@
+//# filename: apps/api/src/routes/algorithm.ts
+
 import { Router } from "express";
 import { Role } from "@algoforge/db";
 import { algorithmController } from "../controllers/algorithm.controller";
@@ -7,11 +9,13 @@ import { validateIdParam, validateSlugParam } from "../validation/algorithm";
 
 const router = Router();
 
+// Public reads — optional ?lang=javascript|python query param
 router.get("/", algorithmController.list);
 router.get("/slug/:slug", validateSlugParam, algorithmController.getBySlug);
 router.get("/id/:id/visualize", validateIdParam, algorithmController.getVisualize);
 router.get("/id/:id", validateIdParam, algorithmController.getById);
 
+// Admin writes
 router.post(
   "/",
   requireAuth,

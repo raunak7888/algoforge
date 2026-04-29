@@ -1,4 +1,6 @@
-import { prisma, Prisma, Difficulty } from "@algoforge/db";
+//# filename: apps/api/src/services/algorithm.service.ts
+
+import { Prisma, Difficulty } from "@algoforge/db";
 import {
   AlgorithmListItemSchema,
   AlgorithmDetailSchema,
@@ -12,6 +14,7 @@ import {
   type AlgorithmDetail,
   type AlgorithmExecution,
 } from "@algoforge/forge";
+import { algorithmRepository, type AlgorithmDetailRow } from "../repositories/algorithm.repository";
 import { AppError } from "../utils/app-error";
 
 export type AlgorithmQuery = {
@@ -20,6 +23,80 @@ export type AlgorithmQuery = {
   isPublished?: boolean;
   search?: string;
 };
+
+// ---------------------------------------------------------------------------
+// Internal helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Selects the best matching display code given a language preference.
+ * Falls back to JavaScript, then the first available entry.
+ */
+function pickDisplayCode(
+  displayCodes: { language: string; code: string }[],
+  requestedLang?: string,
+): { language: string; code: string } | null {
+  if (!displayCodes.length) return null;
+  const preferred = requestedLang ?? "javascript";
+  return (
+    displayCodes.find((dc) => dc.language === preferred) ??
+    displayCodes.find((dc) => dc.language === "javascript") ??
+    displayCodes[0]
+  );
+}
+
+function toAlgorithmDetail(
+  row: NonNullable<AlgorithmDetailRow>,
+  requestedLang?: string,
+): AlgorithmDetail {
+  return AlgorithmDetailSchema.parse({
+    id: row.id,
+    slug: row.slug,
+    name: row.name,
+    description: row.description,
+    difficulty: row.difficulty,
+    complexity:
+      row.timeBest || row.timeAverage || row.timeWorst || row.spaceComplexity
+        ? {
+            timeBest: row.timeBest,
+            timeAverage: row.timeAverage,
+            timeWorst: row.timeWorst,
+            space: row.spaceComplexity,
+          }
+        : null,
+    displayCode: pickDisplayCode(row.displayCodes, requestedLang),
+    tags: row.tags.map((t: { tag: { id: string; label: string } }) => t.tag),
+    forge: row.forge
+      ? {
+          forgeCode: row.forge.forgeCode,
+          inputSchema: row.forge.inputSchema,
+          guardRanges: row.forge.guardRanges,
+          version: row.forge.version,
+        }
+      : null,
+  });
+}
+
+function validateForgeSchemas(forge: {
+  forgeCode: unknown;
+  guardRanges: unknown;
+  inputSchema: unknown;
+}): void {
+  try {
+    ForgeCodeSchema.parse(forge.forgeCode);
+    GuardRangesSchema.parse(forge.guardRanges);
+    InputSchema.parse(forge.inputSchema);
+  } catch (error) {
+    throw AppError.badRequest(
+      "Invalid forge configuration: " +
+        (error instanceof Error ? error.message : "Unknown error"),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Service
+// ---------------------------------------------------------------------------
 
 class AlgorithmService {
   async listAlgorithms(query: AlgorithmQuery): Promise<AlgorithmListItem[]> {
@@ -63,137 +140,49 @@ class AlgorithmService {
         : {}),
     };
 
-    const algorithms = await prisma.algorithm.findMany({
-      where,
-      select: {
-        id: true,
-        slug: true,
-        name: true,
-        categoryId: true,
-        difficulty: true,
-        complexity: {
-          select: {
-            timeBest: true,
-            timeAverage: true,
-            timeWorst: true,
-            space: true,
-          },
-        },
-      },
-      orderBy: { createdAt: "desc" },
-    });
+    const rows = await algorithmRepository.findMany(where);
 
-    return algorithms.map((alg) => AlgorithmListItemSchema.parse(alg));
+    return rows.map((r) =>
+      AlgorithmListItemSchema.parse({
+        id: r.id,
+        slug: r.slug,
+        name: r.name,
+        categoryId: r.categoryId,
+        difficulty: r.difficulty,
+        complexity:
+          r.timeBest || r.timeAverage || r.timeWorst || r.spaceComplexity
+            ? {
+                timeBest: r.timeBest,
+                timeAverage: r.timeAverage,
+                timeWorst: r.timeWorst,
+                space: r.spaceComplexity,
+              }
+            : null,
+      }),
+    );
   }
 
-  async getAlgorithmById(id: string): Promise<AlgorithmDetail> {
-    const algorithm = await prisma.algorithm.findUnique({
-      where: { id },
-      select: {
-        id: true,
-        slug: true,
-        name: true,
-        description: true,
-        difficulty: true,
-        complexity: {
-          select: {
-            timeBest: true,
-            timeAverage: true,
-            timeWorst: true,
-            space: true,
-          },
-        },
-        displayCode: {
-          select: {
-            language: true,
-            code: true,
-          },
-        },
-        tags: {
-          select: {
-            tag: {
-              select: {
-                id: true,
-                label: true,
-              },
-            },
-          },
-        },
-      },
-    });
-
-    if (!algorithm) {
-      throw AppError.notFound("Algorithm not found.");
-    }
-
-    return AlgorithmDetailSchema.parse({
-      ...algorithm,
-      tags: algorithm.tags.map((t) => t.tag),
-    });
+  async getAlgorithmById(id: string, lang?: string): Promise<AlgorithmDetail> {
+    const row = await algorithmRepository.findById(id);
+    if (!row) throw AppError.notFound("Algorithm not found.");
+    return toAlgorithmDetail(row, lang);
   }
 
-  async getAlgorithmBySlug(slug: string): Promise<AlgorithmDetail> {
-    const algorithm = await prisma.algorithm.findUnique({
-      where: { slug },
-      select: {
-        id: true,
-        slug: true,
-        name: true,
-        description: true,
-        difficulty: true,
-        complexity: {
-          select: {
-            timeBest: true,
-            timeAverage: true,
-            timeWorst: true,
-            space: true,
-          },
-        },
-        displayCode: {
-          select: {
-            language: true,
-            code: true,
-          },
-        },
-        tags: {
-          select: {
-            tag: {
-              select: {
-                id: true,
-                label: true,
-              },
-            },
-          },
-        },
-      },
-    });
-
-    if (!algorithm) {
-      throw AppError.notFound("Algorithm not found.");
-    }
-
-    return AlgorithmDetailSchema.parse({
-      ...algorithm,
-      tags: algorithm.tags.map((t) => t.tag),
-    });
+  async getAlgorithmBySlug(slug: string, lang?: string): Promise<AlgorithmDetail> {
+    const row = await algorithmRepository.findBySlug(slug);
+    if (!row) throw AppError.notFound("Algorithm not found.");
+    return toAlgorithmDetail(row, lang);
   }
 
   async getAlgorithmExecution(id: string): Promise<AlgorithmExecution> {
-    const algorithm = await prisma.algorithm.findUnique({
-      where: { id },
-      include: {
-        forge: true,
-      },
-    });
+    const algorithm = await algorithmRepository.findByIdWithForge(id);
 
-    if (!algorithm) {
-      throw AppError.notFound("Algorithm not found.");
-    }
+    if (!algorithm) throw AppError.notFound("Algorithm not found.");
 
     if (!algorithm.forge) {
       if (algorithm.isPublished) {
         console.error(
-          `[Data Integrity Error] Published algorithm ${algorithm.id} is missing forge data.`,
+          `[Data Integrity] Published algorithm ${algorithm.id} missing forge data.`,
         );
       }
       return AlgorithmExecutionSchema.parse({
@@ -202,17 +191,7 @@ class AlgorithmService {
       });
     }
 
-    try {
-      ForgeCodeSchema.parse(algorithm.forge.forgeCode);
-      GuardRangesSchema.parse(algorithm.forge.guardRanges);
-      InputSchema.parse(algorithm.forge.inputSchema);
-    } catch (error) {
-      console.error(
-        `[Data Integrity Error] Corrupted forge data for algorithm ${algorithm.id}:`,
-        error instanceof Error ? error.message : "Unknown error",
-      );
-      throw AppError.internal("Invalid forge configuration stored in database");
-    }
+    validateForgeSchemas(algorithm.forge);
 
     return AlgorithmExecutionSchema.parse({
       algorithmId: algorithm.id,
@@ -227,316 +206,117 @@ class AlgorithmService {
   }
 
   async createAlgorithm(input: CreateAlgorithm): Promise<AlgorithmDetail> {
-    const existing = await prisma.algorithm.findUnique({
-      where: { slug: input.slug },
-    });
-
+    const existing = await algorithmRepository.findBySlugExists(input.slug);
     if (existing) {
       throw AppError.badRequest("Algorithm with this slug already exists.");
     }
 
-    try {
-      ForgeCodeSchema.parse(input.forge.forgeCode);
-      GuardRangesSchema.parse(input.forge.guardRanges);
-      InputSchema.parse(input.forge.inputSchema);
-    } catch (error: unknown) {
-      throw AppError.badRequest(
-        "Invalid forge configuration: " +
-          (error instanceof Error ? error.message : "Unknown error"),
-      );
-    }
+    // Schemas are already cross-validated by Zod superRefine in the package.
+    // Run a secondary deep-parse to catch any internal schema inconsistencies.
+    validateForgeSchemas(input.forge);
 
-    const createdAlgorithm = await prisma.$transaction(async (tx) => {
-      return tx.algorithm.create({
-        data: {
-          slug: input.slug,
-          name: input.name,
-          description: input.description,
-          categoryId: input.categoryId,
-          difficulty: input.difficulty,
-          isPublished: input.isPublished ?? false,
-          complexity: {
-            create: {
-              timeBest: input.complexity.time.best,
-              timeAverage: input.complexity.time.average,
-              timeWorst: input.complexity.time.worst,
-              space: input.complexity.space,
-            },
-          },
-          displayCode: {
-            create: {
-              language: input.displayCode.language,
-              code: input.displayCode.code,
-            },
-          },
-          forge: {
-            create: {
-              forgeCode:
-                input.forge.forgeCode as unknown as Prisma.InputJsonValue,
-              inputSchema:
-                input.forge.inputSchema as unknown as Prisma.InputJsonValue,
-              guardRanges:
-                input.forge.guardRanges as unknown as Prisma.InputJsonValue,
-            },
-          },
-          tags: {
-            create: input.tags.map((tagLabel) => ({
-              tag: {
-                connectOrCreate: {
-                  where: { label: tagLabel },
-                  create: { label: tagLabel },
-                },
-              },
-            })),
-          },
-        },
-        include: {
-          complexity: true,
-          displayCode: true,
-          forge: true,
-          tags: {
-            include: {
-              tag: true,
-            },
-          },
-        },
-      });
+    const row = await algorithmRepository.create({
+      slug: input.slug,
+      name: input.name,
+      description: input.description,
+      categoryId: input.categoryId,
+      difficulty: input.difficulty,
+      isPublished: input.isPublished ?? false,
+      timeBest: input.complexity.time.best,
+      timeAverage: input.complexity.time.average,
+      timeWorst: input.complexity.time.worst,
+      spaceComplexity: input.complexity.space,
+      displayCodes: input.displayCodes,
+      forge: {
+        forgeCode: input.forge.forgeCode as unknown as Prisma.InputJsonValue,
+        inputSchema: input.forge.inputSchema as unknown as Prisma.InputJsonValue,
+        guardRanges: input.forge.guardRanges as unknown as Prisma.InputJsonValue,
+      },
+      tags: input.tags,
     });
 
-    return AlgorithmDetailSchema.parse({
-      id: createdAlgorithm.id,
-      slug: createdAlgorithm.slug,
-      name: createdAlgorithm.name,
-      description: createdAlgorithm.description,
-      difficulty: createdAlgorithm.difficulty,
-      complexity: createdAlgorithm.complexity
-        ? {
-            timeBest: createdAlgorithm.complexity.timeBest,
-            timeAverage: createdAlgorithm.complexity.timeAverage,
-            timeWorst: createdAlgorithm.complexity.timeWorst,
-            space: createdAlgorithm.complexity.space,
-          }
-        : null,
-      displayCode: createdAlgorithm.displayCode
-        ? {
-            language: createdAlgorithm.displayCode.language,
-            code: createdAlgorithm.displayCode.code,
-          }
-        : null,
-      tags: createdAlgorithm.tags.map((t) => t.tag),
-    });
+    return toAlgorithmDetail(row);
   }
 
-  async updateAlgorithm(
-    id: string,
-    input: UpdateAlgorithm,
-  ): Promise<AlgorithmDetail> {
-    const existing = await prisma.algorithm.findUnique({
-      where: { id },
-      include: {
-        complexity: true,
-        displayCode: true,
-        forge: true,
-        tags: true,
-      },
-    });
+  async updateAlgorithm(id: string, input: UpdateAlgorithm): Promise<AlgorithmDetail> {
+    const existing = await algorithmRepository.findById(id);
+    if (!existing) throw AppError.notFound("Algorithm not found.");
 
-    if (!existing) {
-      throw AppError.notFound("Algorithm not found.");
+    if (input.forge) {
+      // Merge update with existing forge data, then validate the combined result.
+      const mergedForge = {
+        forgeCode: input.forge.forgeCode ?? existing.forge?.forgeCode,
+        guardRanges: input.forge.guardRanges ?? existing.forge?.guardRanges,
+        inputSchema: input.forge.inputSchema ?? existing.forge?.inputSchema,
+      };
+      if (mergedForge.forgeCode && mergedForge.guardRanges && mergedForge.inputSchema) {
+        validateForgeSchemas(mergedForge);
+      }
+    }
+
+    const updateData: any = {};
+
+    if (input.slug !== undefined) updateData.slug = input.slug;
+    if (input.name !== undefined) updateData.name = input.name;
+    if (input.description !== undefined) updateData.description = input.description;
+    if (input.categoryId !== undefined)
+      updateData.category = { connect: { id: input.categoryId } };
+    if (input.difficulty !== undefined) updateData.difficulty = input.difficulty;
+    if (input.isPublished !== undefined) updateData.isPublished = input.isPublished;
+
+    if (input.complexity) {
+      if (input.complexity.time?.best !== undefined)
+        updateData.timeBest = input.complexity.time.best;
+      if (input.complexity.time?.average !== undefined)
+        updateData.timeAverage = input.complexity.time.average;
+      if (input.complexity.time?.worst !== undefined)
+        updateData.timeWorst = input.complexity.time.worst;
+      if (input.complexity.space !== undefined)
+        updateData.spaceComplexity = input.complexity.space;
     }
 
     if (input.forge) {
-      try {
-        if (input.forge.forgeCode) ForgeCodeSchema.parse(input.forge.forgeCode);
-        if (input.forge.guardRanges)
-          GuardRangesSchema.parse(input.forge.guardRanges);
-        if (input.forge.inputSchema)
-          InputSchema.parse(input.forge.inputSchema);
-      } catch (error: unknown) {
-        throw AppError.badRequest(
-          "Invalid forge configuration: " +
-            (error instanceof Error ? error.message : "Unknown error"),
-        );
-      }
-    }
-
-    const updatedAlgorithm = await prisma.$transaction(async (tx) => {
-      const data: Prisma.AlgorithmUpdateInput = {};
-
-      if (input.slug !== undefined) data.slug = input.slug;
-      if (input.name !== undefined) data.name = input.name;
-      if (input.description !== undefined) data.description = input.description;
-      if (input.categoryId !== undefined)
-        data.category = { connect: { id: input.categoryId } };
-      if (input.difficulty !== undefined) data.difficulty = input.difficulty;
-      if (input.isPublished !== undefined) data.isPublished = input.isPublished;
-
-      if (input.complexity) {
-        data.complexity = {
-          upsert: {
-            create: {
-              timeBest:
-                input.complexity.time?.best ??
-                existing.complexity?.timeBest ??
-                null,
-              timeAverage:
-                input.complexity.time?.average ??
-                existing.complexity?.timeAverage ??
-                null,
-              timeWorst:
-                input.complexity.time?.worst ??
-                existing.complexity?.timeWorst ??
-                null,
-              space:
-                input.complexity.space ?? existing.complexity?.space ?? null,
-            },
-            update: {
-              ...(input.complexity.time?.best !== undefined
-                ? { timeBest: input.complexity.time.best }
-                : {}),
-              ...(input.complexity.time?.average !== undefined
-                ? { timeAverage: input.complexity.time.average }
-                : {}),
-              ...(input.complexity.time?.worst !== undefined
-                ? { timeWorst: input.complexity.time.worst }
-                : {}),
-              ...(input.complexity.space !== undefined
-                ? { space: input.complexity.space }
-                : {}),
-            },
+      updateData.forge = {
+        upsert: {
+          create: {
+            forgeCode: (input.forge.forgeCode ??
+              existing.forge?.forgeCode ??
+              {}) as unknown as Prisma.InputJsonValue,
+            inputSchema: (input.forge.inputSchema ??
+              existing.forge?.inputSchema ??
+              {}) as unknown as Prisma.InputJsonValue,
+            guardRanges: (input.forge.guardRanges ??
+              existing.forge?.guardRanges ??
+              {}) as unknown as Prisma.InputJsonValue,
           },
-        };
-      }
-
-      if (input.displayCode) {
-        data.displayCode = {
-          upsert: {
-            create: {
-              language:
-                input.displayCode.language ??
-                existing.displayCode?.language ??
-                "js",
-              code:
-                input.displayCode.code ?? existing.displayCode?.code ?? "",
-            },
-            update: {
-              ...(input.displayCode.language !== undefined
-                ? { language: input.displayCode.language }
-                : {}),
-              ...(input.displayCode.code !== undefined
-                ? { code: input.displayCode.code }
-                : {}),
-            },
-          },
-        };
-      }
-
-      if (input.forge) {
-        data.forge = {
-          upsert: {
-            create: {
-              forgeCode: (input.forge.forgeCode ??
-                existing.forge?.forgeCode ??
-                {}) as unknown as Prisma.InputJsonValue,
-              inputSchema: (input.forge.inputSchema ??
-                existing.forge?.inputSchema ??
-                {}) as unknown as Prisma.InputJsonValue,
-              guardRanges: (input.forge.guardRanges ??
-                existing.forge?.guardRanges ??
-                {}) as unknown as Prisma.InputJsonValue,
-            },
-            update: {
-              ...(input.forge.forgeCode
-                ? {
-                    forgeCode:
-                      input.forge.forgeCode as unknown as Prisma.InputJsonValue,
-                  }
-                : {}),
-              ...(input.forge.inputSchema
-                ? {
-                    inputSchema:
-                      input.forge.inputSchema as unknown as Prisma.InputJsonValue,
-                  }
-                : {}),
-              ...(input.forge.guardRanges
-                ? {
-                    guardRanges:
-                      input.forge.guardRanges as unknown as Prisma.InputJsonValue,
-                  }
-                : {}),
-            },
-          },
-        };
-      }
-
-      if (input.tags) {
-        data.tags = {
-          deleteMany: {},
-          create: input.tags.map((tagLabel) => ({
-            tag: {
-              connectOrCreate: {
-                where: { label: tagLabel },
-                create: { label: tagLabel },
-              },
-            },
-          })),
-        };
-      }
-
-      return tx.algorithm.update({
-        where: { id },
-        data,
-        include: {
-          complexity: true,
-          displayCode: true,
-          forge: true,
-          tags: {
-            include: { tag: true },
+          update: {
+            ...(input.forge.forgeCode
+              ? { forgeCode: input.forge.forgeCode as unknown as Prisma.InputJsonValue }
+              : {}),
+            ...(input.forge.inputSchema
+              ? { inputSchema: input.forge.inputSchema as unknown as Prisma.InputJsonValue }
+              : {}),
+            ...(input.forge.guardRanges
+              ? { guardRanges: input.forge.guardRanges as unknown as Prisma.InputJsonValue }
+              : {}),
           },
         },
-      });
+      };
+    }
+
+    const row = await algorithmRepository.update(id, {
+      ...updateData,
+      ...(input.displayCodes ? { displayCodes: input.displayCodes } : {}),
+      ...(input.tags ? { tags: input.tags } : {}),
     });
 
-    return AlgorithmDetailSchema.parse({
-      id: updatedAlgorithm.id,
-      slug: updatedAlgorithm.slug,
-      name: updatedAlgorithm.name,
-      description: updatedAlgorithm.description,
-      difficulty: updatedAlgorithm.difficulty,
-      complexity: updatedAlgorithm.complexity
-        ? {
-            timeBest: updatedAlgorithm.complexity.timeBest,
-            timeAverage: updatedAlgorithm.complexity.timeAverage,
-            timeWorst: updatedAlgorithm.complexity.timeWorst,
-            space: updatedAlgorithm.complexity.space,
-          }
-        : null,
-      displayCode: updatedAlgorithm.displayCode
-        ? {
-            language: updatedAlgorithm.displayCode.language,
-            code: updatedAlgorithm.displayCode.code,
-          }
-        : null,
-      tags: updatedAlgorithm.tags.map((t) => t.tag),
-      forge: updatedAlgorithm.forge
-        ? {
-            forgeCode: updatedAlgorithm.forge.forgeCode,
-            inputSchema: updatedAlgorithm.forge.inputSchema,
-            guardRanges: updatedAlgorithm.forge.guardRanges,
-            version: updatedAlgorithm.forge.version,
-          }
-        : null,
-    });
+    return toAlgorithmDetail(row);
   }
 
   async deleteAlgorithm(id: string): Promise<void> {
-    const existing = await prisma.algorithm.findUnique({ where: { id } });
-
-    if (!existing) {
-      throw AppError.notFound("Algorithm not found.");
-    }
-
-    await prisma.algorithm.delete({ where: { id } });
+    const existing = await algorithmRepository.findById(id);
+    if (!existing) throw AppError.notFound("Algorithm not found.");
+    await algorithmRepository.delete(id);
   }
 }
 

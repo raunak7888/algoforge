@@ -1,3 +1,5 @@
+//# filename: apps/api/src/config/env.ts
+
 import dotenv from "dotenv";
 
 dotenv.config();
@@ -7,26 +9,16 @@ type AIProvider = (typeof AI_PROVIDERS)[number];
 
 function requireEnv(name: string): string {
   const value = process.env[name];
-
-  if (!value) {
-    throw new Error(`Missing required environment variable: ${name}`);
-  }
-
+  if (!value) throw new Error(`Missing required environment variable: ${name}`);
   return value;
 }
 
 function parseInteger(name: string, fallback: number): number {
   const rawValue = process.env[name];
-
-  if (!rawValue) {
-    return fallback;
-  }
-
+  if (!rawValue) return fallback;
   const parsed = Number(rawValue);
-  if (!Number.isInteger(parsed) || parsed <= 0) {
+  if (!Number.isInteger(parsed) || parsed <= 0)
     throw new Error(`Environment variable ${name} must be a positive integer.`);
-  }
-
   return parsed;
 }
 
@@ -36,30 +28,20 @@ function parseStringEnum<T extends string>(
   fallback: T,
 ): T {
   const rawValue = process.env[name];
-
-  if (!rawValue) {
-    return fallback;
-  }
-
-  if (!allowedValues.includes(rawValue as T)) {
+  if (!rawValue) return fallback;
+  if (!allowedValues.includes(rawValue as T))
     throw new Error(
       `Environment variable ${name} must be one of: ${allowedValues.join(", ")}.`,
     );
-  }
-
   return rawValue as T;
 }
 
 function parseList(name: string): string[] {
   const rawValue = process.env[name];
-
-  if (!rawValue) {
-    return [];
-  }
-
+  if (!rawValue) return [];
   return rawValue
     .split(",")
-    .map((value) => value.trim())
+    .map((v) => v.trim())
     .filter(Boolean);
 }
 
@@ -85,6 +67,7 @@ export const env = {
   authIssuer: process.env.AUTH_ISSUER ?? "algoforge-api",
   authAudience: process.env.AUTH_AUDIENCE ?? "algoforge-web",
   geminiApiKey: requireEnv("GEMINI_API_KEY"),
+  adminUpgradeSecret: process.env.ADMIN_UPGRADE_SECRET ?? "1d201bf1-eb81-42ec-bd13-3e627b0fc4e9",
   ai: {
     provider: aiProvider as AIProvider,
     model: process.env.AI_MODEL ?? "gemini-2.0-flash",

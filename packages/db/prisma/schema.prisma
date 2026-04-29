@@ -1,3 +1,5 @@
+// filename: packages/db/prisma/schema.prisma
+
 generator client {
   provider = "prisma-client-js"
 }
@@ -19,14 +21,14 @@ enum Difficulty {
 }
 
 model User {
-  id        String    @id @default(cuid())
-  email     String?   @unique
-  username  String?   @unique
+  id        String     @id @default(cuid())
+  email     String?    @unique
+  username  String?    @unique
   name      String?
   image     String?
-  role      Role      @default(USER)
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
+  role      Role       @default(USER)
+  createdAt DateTime   @default(now()) @map("created_at")
+  updatedAt DateTime   @updatedAt @map("updated_at")
 
   accounts  Account[]
   sessions  Session[]
@@ -34,132 +36,147 @@ model User {
 
   @@index([email])
   @@index([username])
+  @@map("users")
 }
 
 model Account {
-  id                String  @id @default(cuid())
-  userId            String
+  id                String @id @default(cuid())
+  userId            String @map("user_id")
   provider          String
-  providerAccountId String
-  user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  providerAccountId String @map("provider_account_id")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([provider, providerAccountId])
   @@index([userId])
+  @@map("accounts")
 }
 
 model Session {
-  id             String    @id @default(cuid())
-  userId         String
-  tokenHash      String
-  expiresAt      DateTime
-  revokedAt      DateTime?
-  lastUsedAt     DateTime
-  ipAddress      String?
-  userAgent      String?
-  rotatedFromId  String?
-  user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id            String    @id @default(cuid())
+  userId        String    @map("user_id")
+  tokenHash     String    @map("token_hash")
+  expiresAt     DateTime  @map("expires_at")
+  revokedAt     DateTime? @map("revoked_at")
+  lastUsedAt    DateTime  @map("last_used_at")
+  ipAddress     String?   @map("ip_address")
+  userAgent     String?   @map("user_agent")
+  rotatedFromId String?   @map("rotated_from_id")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
   @@index([tokenHash])
+  @@map("sessions")
 }
 
 model Analysis {
-  id           String   @id @default(cuid())
-  userId       String
-  code         String
-  language     String
-  complexity   String?
-  suggestion   String?
-  timeEstimate String?
-  result       Json
-  shareId      String?  @unique
-  isPublic     Boolean  @default(false)
-  createdAt    DateTime @default(now())
-  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id         String   @id @default(cuid())
+  userId     String   @map("user_id")
+  code       String
+  language   String
+  complexity String?
+  suggestion String?
+  result     Json
+  shareId    String?  @unique @map("share_id")
+  isPublic   Boolean  @default(false) @map("is_public")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, createdAt])
   @@index([shareId])
+  @@map("analyses")
 }
 
 model Category {
   id          String      @id
   label       String
   description String?
-  iconName    String?
-  sortOrder   Int         @default(0)
-  createdAt   DateTime    @default(now())
-  updatedAt   DateTime    @updatedAt
-  algorithms  Algorithm[]
+  iconName    String?     @map("icon_name")
+  sortOrder   Int         @default(0) @map("sort_order")
+  createdAt   DateTime    @default(now()) @map("created_at")
+  updatedAt   DateTime    @updatedAt @map("updated_at")
+
+  algorithms Algorithm[]
 
   @@index([sortOrder])
+  @@map("categories")
 }
 
+// Complexity was a separate one-to-one table — over-normalized.
+// Fields are inlined directly into algorithms to eliminate the join.
 model Algorithm {
-  id              String     @id @default(uuid())
-  slug            String     @unique
-  name            String
-  description     String
-  categoryId      String
-  difficulty      Difficulty @default(beginner)
-  isPublished     Boolean    @default(false)
-  createdAt       DateTime   @default(now())
-  updatedAt       DateTime   @updatedAt
+  id             String     @id @default(uuid())
+  slug           String     @unique
+  name           String
+  description    String
+  categoryId     String     @map("category_id")
+  difficulty     Difficulty @default(beginner)
+  isPublished    Boolean    @default(false) @map("is_published")
+  timeBest       String?    @map("time_best")
+  timeAverage    String?    @map("time_average")
+  timeWorst      String?    @map("time_worst")
+  spaceComplexity String?   @map("space_complexity")
+  createdAt      DateTime   @default(now()) @map("created_at")
+  updatedAt      DateTime   @updatedAt @map("updated_at")
 
-  category        Category   @relation(fields: [categoryId], references: [id])
-  complexity      Complexity?
-  displayCode     DisplayCode?
-  forge           AlgorithmForge?
-  tags            AlgorithmTag[]
+  category     Category       @relation(fields: [categoryId], references: [id])
+  displayCodes DisplayCode[]
+  forge        ForgeConfig?
+  tags         AlgorithmTag[]
 
   @@index([categoryId])
   @@index([slug])
   @@index([difficulty])
   @@index([isPublished])
+  @@map("algorithms")
 }
 
-model Complexity {
-  id            String    @id @default(uuid())
-  algorithmId   String    @unique
-  timeBest      String?
-  timeAverage   String?
-  timeWorst     String?
-  space         String?
-
-  algorithm     Algorithm @relation(fields: [algorithmId], references: [id], onDelete: Cascade)
-}
-
+// One algorithm can have display code in multiple languages.
+// Uniqueness enforced on (algorithm_id, language).
 model DisplayCode {
-  id            String    @id @default(uuid())
-  algorithmId   String    @unique
-  language      String
-  code          String
+  id          String @id @default(uuid())
+  algorithmId String @map("algorithm_id")
+  language    String
+  code        String
 
-  algorithm     Algorithm @relation(fields: [algorithmId], references: [id], onDelete: Cascade)
+  algorithm Algorithm @relation(fields: [algorithmId], references: [id], onDelete: Cascade)
+
+  @@unique([algorithmId, language])
+  @@index([algorithmId])
+  @@map("display_codes")
 }
 
-model AlgorithmForge {
-  id            String    @id @default(uuid())
-  algorithmId   String    @unique
-  forgeCode     Json
-  inputSchema   Json
-  guardRanges   Json
-  version       Int       @default(1)
+// Stores forge JS code + metadata only. Never executed server-side.
+model ForgeConfig {
+  id          String @id @default(uuid())
+  algorithmId String @unique @map("algorithm_id")
+  forgeCode   Json   @map("forge_code")
+  inputSchema Json   @map("input_schema")
+  guardRanges Json   @map("guard_ranges")
+  version     Int    @default(1)
 
-  algorithm     Algorithm @relation(fields: [algorithmId], references: [id], onDelete: Cascade)
+  algorithm Algorithm @relation(fields: [algorithmId], references: [id], onDelete: Cascade)
+
+  @@map("forge_configs")
 }
 
 model Tag {
-  id            String    @id @default(uuid())
-  label         String    @unique
-  algorithms    AlgorithmTag[]
+  id         String         @id @default(uuid())
+  label      String         @unique
+  algorithms AlgorithmTag[]
+
+  @@map("tags")
 }
 
 model AlgorithmTag {
-  algorithmId   String
-  tagId         String
+  algorithmId String @map("algorithm_id")
+  tagId       String @map("tag_id")
 
-  algorithm     Algorithm @relation(fields: [algorithmId], references: [id], onDelete: Cascade)
-  tag           Tag       @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  algorithm Algorithm @relation(fields: [algorithmId], references: [id], onDelete: Cascade)
+  tag       Tag       @relation(fields: [tagId], references: [id], onDelete: Cascade)
 
   @@id([algorithmId, tagId])
+  @@map("algorithm_tags")
 }

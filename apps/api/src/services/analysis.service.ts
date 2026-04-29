@@ -1,3 +1,5 @@
+//# filename: apps/api/src/services/analysis.service.ts
+
 import {
   AnalysisHistoryItemSchema,
   AnalysisRecordSchema,
@@ -5,8 +7,9 @@ import {
   type AnalysisHistoryResponse,
   type CreateAnalysisInput,
 } from "@algoforge/analysis";
-import { prisma, Prisma } from "@algoforge/db";
+import { Prisma } from "@algoforge/db";
 import { aiService } from "./ai.service";
+import { analysisRepository } from "../repositories/analysis.repository";
 import {
   decodeAnalysisCursor,
   encodeAnalysisCursor,
@@ -29,58 +32,25 @@ function extractComplexityString(value: Prisma.JsonValue | null): string | null 
   return null;
 }
 
-function serializeAnalysisRecord(analysis: {
-  id: string;
-  language: string;
-  result: Prisma.JsonValue;
-  createdAt: Date;
-}) {
-  return AnalysisRecordSchema.parse({
-    id: analysis.id,
-    language: analysis.language,
-    result: analysis.result,
-    createdAt: analysis.createdAt.toISOString(),
-  });
-}
-
-function serializeHistoryItem(analysis: {
-  id: string;
-  language: string;
-  complexity: Prisma.JsonValue | null;
-  suggestion: string | null;
-  createdAt: Date;
-}) {
-  return AnalysisHistoryItemSchema.parse({
-    id: analysis.id,
-    language: analysis.language,
-    complexity: extractComplexityString(analysis.complexity),
-    suggestion: analysis.suggestion,
-    createdAt: analysis.createdAt.toISOString(),
-  });
-}
-
 class AnalysisService {
   async createAnalysis(userId: string, input: CreateAnalysisInput) {
     const analysisResult = await aiService.analyzeCode(input);
 
-    const analysis = await prisma.analysis.create({
-      data: {
-        userId,
-        code: input.code,
-        language: input.language,
-        complexity: analysisResult.complexity.time.worst,
-        suggestion: analysisResult.improvements[0]?.suggestion ?? null,
-        result: analysisResult as unknown as Prisma.InputJsonValue,
-      },
-      select: {
-        id: true,
-        language: true,
-        result: true,
-        createdAt: true,
-      },
+    const row = await analysisRepository.create({
+      userId,
+      code: input.code,
+      language: input.language,
+      complexity: analysisResult.complexity.time.worst,
+      suggestion: analysisResult.improvements[0]?.suggestion ?? null,
+      result: analysisResult as unknown as Prisma.InputJsonValue,
     });
 
-    return serializeAnalysisRecord(analysis);
+    return AnalysisRecordSchema.parse({
+      id: row.id,
+      language: row.language,
+      result: row.result,
+      createdAt: row.createdAt.toISOString(),
+    });
   }
 
   async listUserAnalyses(
@@ -90,38 +60,26 @@ class AnalysisService {
     const cursor = query.cursor ? decodeAnalysisCursor(query.cursor) : null;
     const take = query.limit + 1;
 
-    const analyses = await prisma.analysis.findMany({
-      where: {
-        userId,
-        ...(cursor
-          ? {
-              OR: [
-                { createdAt: { lt: new Date(cursor.createdAt) } },
-                {
-                  createdAt: { equals: new Date(cursor.createdAt) },
-                  id: { lt: cursor.id },
-                },
-              ],
-            }
-          : {}),
-      },
-      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+    const rows = await analysisRepository.findManyByUser(userId, {
+      cursorCreatedAt: cursor ? new Date(cursor.createdAt) : undefined,
+      cursorId: cursor?.id,
       take,
-      select: {
-        id: true,
-        language: true,
-        complexity: true,
-        suggestion: true,
-        createdAt: true,
-      },
     });
 
-    const hasMore = analyses.length > query.limit;
-    const page = hasMore ? analyses.slice(0, query.limit) : analyses;
+    const hasMore = rows.length > query.limit;
+    const page = hasMore ? rows.slice(0, query.limit) : rows;
     const lastItem = page.at(-1);
 
     return {
-      data: page.map(serializeHistoryItem),
+      data: page.map((r) =>
+        AnalysisHistoryItemSchema.parse({
+          id: r.id,
+          language: r.language,
+          complexity: extractComplexityString(r.complexity as Prisma.JsonValue | null),
+          suggestion: r.suggestion,
+          createdAt: r.createdAt.toISOString(),
+        }),
+      ),
       meta: {
         nextCursor:
           hasMore && lastItem
@@ -136,37 +94,20 @@ class AnalysisService {
   }
 
   async getUserAnalysisById(userId: string, analysisId: string) {
-    const analysis = await prisma.analysis.findFirst({
-      where: {
-        id: analysisId,
-        userId,
-      },
-      select: {
-        id: true,
-        language: true,
-        result: true,
-        createdAt: true,
-      },
+    const row = await analysisRepository.findOneByUser(userId, analysisId);
+    if (!row) throw AppError.notFound("Analysis not found.");
+
+    return AnalysisRecordSchema.parse({
+      id: row.id,
+      language: row.language,
+      result: row.result,
+      createdAt: row.createdAt.toISOString(),
     });
-
-    if (!analysis) {
-      throw AppError.notFound("Analysis not found.");
-    }
-
-    return serializeAnalysisRecord(analysis);
   }
 
   async shareAnalysis(userId: string, analysisId: string) {
-    const analysis = await prisma.analysis.findFirst({
-      where: {
-        id: analysisId,
-        userId,
-      },
-    });
-
-    if (!analysis) {
-      throw AppError.notFound("Analysis not found.");
-    }
+    const analysis = await analysisRepository.findForShare(analysisId, userId);
+    if (!analysis) throw AppError.notFound("Analysis not found.");
 
     if (analysis.shareId && analysis.isPublic) {
       return { shareUrl: `${env.webAppUrl}/share/${analysis.shareId}` };
@@ -174,42 +115,14 @@ class AnalysisService {
 
     const { nanoid } = await import("nanoid");
     const shareId = nanoid(10);
-
-    await prisma.analysis.update({
-      where: { id: analysisId },
-      data: {
-        shareId,
-        isPublic: true,
-      },
-    });
+    await analysisRepository.setPublic(analysisId, shareId);
 
     return { shareUrl: `${env.webAppUrl}/share/${shareId}` };
   }
 
   async getPublicAnalysis(shareId: string) {
-    const analysis = await prisma.analysis.findUnique({
-      where: { shareId, isPublic: true },
-      select: {
-        id: true,
-        code: true,
-        language: true,
-        result: true,
-        createdAt: true,
-        isPublic: true,
-        user: {
-          select: {
-            id: true,
-            name: true,
-            username: true,
-            image: true,
-          },
-        },
-      },
-    });
-
-    if (!analysis) {
-      throw AppError.notFound("Analysis not found or not public.");
-    }
+    const analysis = await analysisRepository.findPublicByShareId(shareId);
+    if (!analysis) throw AppError.notFound("Analysis not found or not public.");
 
     return SharedAnalysisSchema.parse({
       id: analysis.id,
@@ -229,4 +142,4 @@ class AnalysisService {
   }
 }
 
-export const analysisService = new AnalysisService();
+export const analysisService = new AnalysisService();   

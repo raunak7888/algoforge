@@ -1,6 +1,11 @@
+//# filename: apps/api/src/services/auth.service.ts
+
 import { OAuth2Client } from "google-auth-library";
-import { Role, prisma } from "@algoforge/db";
+import { Role } from "@algoforge/db";
+import { prisma } from "@algoforge/db";
 import { env, googleOAuthConfig } from "../config/env";
+import { sessionRepository } from "../repositories/session.repository";
+import { userRepository } from "../repositories/user.repository";
 import { AppError } from "../utils/app-error";
 import { hashToken, randomToken, safeTokenEquals } from "../utils/crypto";
 import {
@@ -29,24 +34,13 @@ type SessionCookies = {
   csrfToken: string;
 };
 
-type AuthResult = SessionCookies & {
-  user: AuthenticatedUser;
-};
+type AuthResult = SessionCookies & { user: AuthenticatedUser };
 
 const googleClient = new OAuth2Client(
   env.googleClientId,
   env.googleClientSecret,
   googleOAuthConfig.redirectUri,
 );
-
-const userSelect = {
-  id: true,
-  email: true,
-  username: true,
-  name: true,
-  image: true,
-  role: true,
-} as const;
 
 class AuthService {
   buildGoogleAuthorizationUrl(): { url: string; state: string } {
@@ -58,7 +52,6 @@ class AuthService {
       state,
       prompt: "select_account",
     });
-
     return { url, state };
   }
 
@@ -68,20 +61,14 @@ class AuthService {
   ): Promise<AuthResult> {
     const { tokens } = await googleClient.getToken(code);
     const idToken = tokens.id_token;
-
-    if (!idToken) {
-      throw AppError.unauthorized("Google did not return an ID token.");
-    }
+    if (!idToken) throw AppError.unauthorized("Google did not return an ID token.");
 
     const ticket = await googleClient.verifyIdToken({
       idToken,
       audience: env.googleClientId,
     });
     const payload = ticket.getPayload();
-
-    if (!payload?.sub) {
-      throw AppError.unauthorized("Google account data is invalid.");
-    }
+    if (!payload?.sub) throw AppError.unauthorized("Google account data is invalid.");
 
     const user = await this.findOrCreateOAuthUser({
       provider: "google",
@@ -97,32 +84,16 @@ class AuthService {
   async authenticateAccessToken(accessToken: string) {
     const payload = verifyAccessToken(accessToken);
 
-    const session = await prisma.session.findFirst({
-      where: {
-        id: payload.sessionId,
-        userId: payload.sub,
-        revokedAt: null,
-        expiresAt: { gt: new Date() },
-      },
-      select: {
-        id: true,
-        expiresAt: true,
-        user: {
-          select: userSelect,
-        },
-      },
-    });
+    const session = await sessionRepository.findActiveById(
+      payload.sessionId,
+      payload.sub,
+    );
 
-    if (!session) {
-      throw AppError.unauthorized("Session is invalid.");
-    }
+    if (!session) throw AppError.unauthorized("Session is invalid.");
 
     return {
       user: session.user,
-      session: {
-        id: session.id,
-        expiresAt: session.expiresAt,
-      },
+      session: { id: session.id, expiresAt: session.expiresAt },
     };
   }
 
@@ -131,20 +102,15 @@ class AuthService {
     metadata: RequestMetadata,
   ): Promise<AuthResult> {
     const payload = verifyRefreshToken(refreshToken);
-    const presentedTokenHash = hashToken(refreshToken);
+    const presentedHash = hashToken(refreshToken);
 
-    const session = await prisma.session.findUnique({
-      where: { id: payload.sessionId },
-      include: {
-        user: { select: userSelect },
-      },
-    });
+    const session = await sessionRepository.findByIdWithUser(payload.sessionId);
 
     if (!session || session.userId !== payload.sub) {
       throw AppError.unauthorized("Refresh session is invalid.");
     }
 
-    if (!safeTokenEquals(presentedTokenHash, session.tokenHash)) {
+    if (!safeTokenEquals(presentedHash, session.tokenHash)) {
       throw AppError.unauthorized("Refresh token is invalid.");
     }
 
@@ -154,76 +120,44 @@ class AuthService {
     }
 
     if (session.expiresAt <= new Date()) {
-      await this.revokeSession(session.id);
+      await sessionRepository.revokeById(session.id);
       throw AppError.unauthorized("Refresh token expired.");
     }
 
-    const rotatedSession = await prisma
-      .$transaction(async (tx) => {
-        const now = new Date();
-        const revocation = await tx.session.updateMany({
-          where: {
-            id: session.id,
-            userId: session.userId,
-            tokenHash: presentedTokenHash,
-            revokedAt: null,
-            expiresAt: { gt: now },
-          },
-          data: {
-            revokedAt: now,
-            lastUsedAt: now,
-            ipAddress: metadata.ipAddress,
-            userAgent: metadata.userAgent,
-          },
-        });
+    const nextRefreshToken = signRefreshToken({
+      sub: session.user.id,
+      sessionId: randomToken(24),
+    });
+    const nextSessionId = verifyRefreshToken(nextRefreshToken).sessionId;
 
-        if (revocation.count !== 1) {
-          throw AppError.unauthorized("Refresh token reuse detected.");
-        }
+    const rotated = await sessionRepository.rotate(
+      session.id,
+      session.userId,
+      presentedHash,
+      {
+        id: nextSessionId,
+        tokenHash: hashToken(nextRefreshToken),
+        expiresAt: this.buildRefreshExpiry(),
+        lastUsedAt: new Date(),
+        ipAddress: metadata.ipAddress,
+        userAgent: metadata.userAgent,
+      },
+    );
 
-        const nextRefreshToken = signRefreshToken({
-          sub: session.user.id,
-          sessionId: randomToken(24),
-        });
-
-        const nextSessionId = verifyRefreshToken(nextRefreshToken).sessionId;
-        const nextSession = await tx.session.create({
-          data: {
-            id: nextSessionId,
-            userId: session.user.id,
-            tokenHash: hashToken(nextRefreshToken),
-            expiresAt: this.buildRefreshExpiry(),
-            lastUsedAt: now,
-            ipAddress: metadata.ipAddress,
-            userAgent: metadata.userAgent,
-            rotatedFromId: session.id,
-          },
-        });
-
-        return {
-          session: nextSession,
-          refreshToken: nextRefreshToken,
-        };
-      })
-      .catch(async (error) => {
-        if (
-          error instanceof AppError &&
-          error.message === "Refresh token reuse detected."
-        ) {
-          await this.revokeAllUserSessions(session.userId);
-        }
-        throw error;
-      });
+    if (!rotated) {
+      await this.revokeAllUserSessions(session.userId);
+      throw AppError.unauthorized("Refresh token reuse detected.");
+    }
 
     const accessToken = signAccessToken({
       sub: session.user.id,
-      sessionId: rotatedSession.session.id,
+      sessionId: nextSessionId,
       role: session.user.role,
     });
 
     return {
       accessToken,
-      refreshToken: rotatedSession.refreshToken,
+      refreshToken: nextRefreshToken,
       csrfToken: randomToken(24),
       user: session.user,
     };
@@ -232,22 +166,14 @@ class AuthService {
   async revokeSessionByRefreshToken(refreshToken: string): Promise<void> {
     try {
       const payload = verifyRefreshToken(refreshToken);
-      await this.revokeSession(payload.sessionId, payload.sub);
+      await sessionRepository.revokeById(payload.sessionId, payload.sub);
     } catch {
       return;
     }
   }
 
   async revokeAllUserSessions(userId: string): Promise<void> {
-    await prisma.session.updateMany({
-      where: {
-        userId,
-        revokedAt: null,
-      },
-      data: {
-        revokedAt: new Date(),
-      },
-    });
+    await sessionRepository.revokeAllForUser(userId);
   }
 
   private async createSessionForUser(
@@ -260,16 +186,14 @@ class AuthService {
     });
     const refreshPayload = verifyRefreshToken(refreshToken);
 
-    await prisma.session.create({
-      data: {
-        id: refreshPayload.sessionId,
-        userId: user.id,
-        tokenHash: hashToken(refreshToken),
-        expiresAt: this.buildRefreshExpiry(),
-        lastUsedAt: new Date(),
-        ipAddress: metadata.ipAddress,
-        userAgent: metadata.userAgent,
-      },
+    await sessionRepository.create({
+      id: refreshPayload.sessionId,
+      userId: user.id,
+      tokenHash: hashToken(refreshToken),
+      expiresAt: this.buildRefreshExpiry(),
+      lastUsedAt: new Date(),
+      ipAddress: metadata.ipAddress,
+      userAgent: metadata.userAgent,
     });
 
     const accessToken = signAccessToken({
@@ -278,34 +202,13 @@ class AuthService {
       role: user.role,
     });
 
-    return {
-      accessToken,
-      refreshToken,
-      csrfToken: randomToken(24),
-      user,
-    };
+    return { accessToken, refreshToken, csrfToken: randomToken(24), user };
   }
 
   private buildRefreshExpiry(): Date {
-    const expiresAt = new Date();
-    expiresAt.setDate(expiresAt.getDate() + env.refreshTokenTtlDays);
-    return expiresAt;
-  }
-
-  private async revokeSession(
-    sessionId: string,
-    userId?: string,
-  ): Promise<void> {
-    await prisma.session.updateMany({
-      where: {
-        id: sessionId,
-        ...(userId ? { userId } : {}),
-        revokedAt: null,
-      },
-      data: {
-        revokedAt: new Date(),
-      },
-    });
+    const d = new Date();
+    d.setDate(d.getDate() + env.refreshTokenTtlDays);
+    return d;
   }
 
   private async findOrCreateOAuthUser(input: {
@@ -325,7 +228,14 @@ class AuthService {
         },
         include: {
           user: {
-            select: userSelect,
+            select: {
+              id: true,
+              email: true,
+              username: true,
+              name: true,
+              image: true,
+              role: true,
+            },
           },
         },
       });
@@ -338,7 +248,14 @@ class AuthService {
             name: input.name,
             image: input.image,
           },
-          select: userSelect,
+          select: {
+            id: true,
+            email: true,
+            username: true,
+            name: true,
+            image: true,
+            role: true,
+          },
         });
       }
 
@@ -346,7 +263,14 @@ class AuthService {
         input.email !== null
           ? await tx.user.findUnique({
               where: { email: input.email },
-              select: userSelect,
+              select: {
+                id: true,
+                email: true,
+                username: true,
+                name: true,
+                image: true,
+                role: true,
+              },
             })
           : null;
 
@@ -359,7 +283,14 @@ class AuthService {
             name: input.name,
             image: input.image,
           },
-          select: userSelect,
+          select: {
+            id: true,
+            email: true,
+            username: true,
+            name: true,
+            image: true,
+            role: true,
+          },
         }));
 
       await tx.account.create({
@@ -373,11 +304,15 @@ class AuthService {
       if (existingUser) {
         return tx.user.update({
           where: { id: existingUser.id },
-          data: {
-            name: input.name,
-            image: input.image,
+          data: { name: input.name, image: input.image },
+          select: {
+            id: true,
+            email: true,
+            username: true,
+            name: true,
+            image: true,
+            role: true,
           },
-          select: userSelect,
         });
       }
 

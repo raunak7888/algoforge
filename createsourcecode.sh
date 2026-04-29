@@ -20,6 +20,7 @@ echo "Collecting source code into $OUTPUT_FILE..."
 find . \
     -path "./node_modules" -prune -o \
     -path "./dist" -prune -o \
+    -path "./apps/web" -prune -o \
     \( "${EXTENSIONS[@]}" \) -print | while read -r file; do
         {
             echo "------------------------------------------------"
