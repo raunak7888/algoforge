@@ -1,78 +1,8 @@
-/*
-  Warnings:
+-- CreateEnum
+CREATE TYPE "Role" AS ENUM ('USER', 'ADMIN');
 
-  - You are about to drop the `Account` table. If the table is not empty, all the data it contains will be lost.
-  - You are about to drop the `Algorithm` table. If the table is not empty, all the data it contains will be lost.
-  - You are about to drop the `AlgorithmForge` table. If the table is not empty, all the data it contains will be lost.
-  - You are about to drop the `AlgorithmTag` table. If the table is not empty, all the data it contains will be lost.
-  - You are about to drop the `Analysis` table. If the table is not empty, all the data it contains will be lost.
-  - You are about to drop the `Category` table. If the table is not empty, all the data it contains will be lost.
-  - You are about to drop the `Complexity` table. If the table is not empty, all the data it contains will be lost.
-  - You are about to drop the `DisplayCode` table. If the table is not empty, all the data it contains will be lost.
-  - You are about to drop the `Session` table. If the table is not empty, all the data it contains will be lost.
-  - You are about to drop the `Tag` table. If the table is not empty, all the data it contains will be lost.
-  - You are about to drop the `User` table. If the table is not empty, all the data it contains will be lost.
-
-*/
--- DropForeignKey
-ALTER TABLE "Account" DROP CONSTRAINT "Account_userId_fkey";
-
--- DropForeignKey
-ALTER TABLE "Algorithm" DROP CONSTRAINT "Algorithm_categoryId_fkey";
-
--- DropForeignKey
-ALTER TABLE "AlgorithmForge" DROP CONSTRAINT "AlgorithmForge_algorithmId_fkey";
-
--- DropForeignKey
-ALTER TABLE "AlgorithmTag" DROP CONSTRAINT "AlgorithmTag_algorithmId_fkey";
-
--- DropForeignKey
-ALTER TABLE "AlgorithmTag" DROP CONSTRAINT "AlgorithmTag_tagId_fkey";
-
--- DropForeignKey
-ALTER TABLE "Analysis" DROP CONSTRAINT "Analysis_userId_fkey";
-
--- DropForeignKey
-ALTER TABLE "Complexity" DROP CONSTRAINT "Complexity_algorithmId_fkey";
-
--- DropForeignKey
-ALTER TABLE "DisplayCode" DROP CONSTRAINT "DisplayCode_algorithmId_fkey";
-
--- DropForeignKey
-ALTER TABLE "Session" DROP CONSTRAINT "Session_userId_fkey";
-
--- DropTable
-DROP TABLE "Account";
-
--- DropTable
-DROP TABLE "Algorithm";
-
--- DropTable
-DROP TABLE "AlgorithmForge";
-
--- DropTable
-DROP TABLE "AlgorithmTag";
-
--- DropTable
-DROP TABLE "Analysis";
-
--- DropTable
-DROP TABLE "Category";
-
--- DropTable
-DROP TABLE "Complexity";
-
--- DropTable
-DROP TABLE "DisplayCode";
-
--- DropTable
-DROP TABLE "Session";
-
--- DropTable
-DROP TABLE "Tag";
-
--- DropTable
-DROP TABLE "User";
+-- CreateEnum
+CREATE TYPE "Difficulty" AS ENUM ('beginner', 'intermediate', 'advanced');
 
 -- CreateTable
 CREATE TABLE "users" (
@@ -127,6 +57,20 @@ CREATE TABLE "analyses" (
     "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT "analyses_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "explanation_sessions" (
+    "id" TEXT NOT NULL,
+    "user_id" TEXT NOT NULL,
+    "title" TEXT,
+    "share_id" TEXT,
+    "is_public" BOOLEAN NOT NULL DEFAULT false,
+    "messages" JSONB NOT NULL DEFAULT '[]',
+    "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "explanation_sessions_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
@@ -233,6 +177,15 @@ CREATE INDEX "analyses_user_id_created_at_idx" ON "analyses"("user_id", "created
 CREATE INDEX "analyses_share_id_idx" ON "analyses"("share_id");
 
 -- CreateIndex
+CREATE UNIQUE INDEX "explanation_sessions_share_id_key" ON "explanation_sessions"("share_id");
+
+-- CreateIndex
+CREATE INDEX "explanation_sessions_user_id_created_at_idx" ON "explanation_sessions"("user_id", "created_at");
+
+-- CreateIndex
+CREATE INDEX "explanation_sessions_share_id_idx" ON "explanation_sessions"("share_id");
+
+-- CreateIndex
 CREATE INDEX "categories_sort_order_idx" ON "categories"("sort_order");
 
 -- CreateIndex
@@ -270,6 +223,9 @@ ALTER TABLE "sessions" ADD CONSTRAINT "sessions_user_id_fkey" FOREIGN KEY ("user
 
 -- AddForeignKey
 ALTER TABLE "analyses" ADD CONSTRAINT "analyses_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "explanation_sessions" ADD CONSTRAINT "explanation_sessions_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "algorithms" ADD CONSTRAINT "algorithms_category_id_fkey" FOREIGN KEY ("category_id") REFERENCES "categories"("id") ON DELETE RESTRICT ON UPDATE CASCADE;

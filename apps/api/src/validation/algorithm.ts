@@ -6,12 +6,10 @@ import {
   type UpdateAlgorithm,
 } from "@algoforge/forge";
 import { AppError } from "../utils/app-error";
-import type { AlgorithmQuery } from "../services/algorithm.service";
+import type { AlgorithmQuery } from "../types/algorithm.types";
 
 export function parseCreateAlgorithm(value: unknown): CreateAlgorithm {
-
   const result = CreateAlgorithmSchema.safeParse(value);
-  console.log(result)
   if (!result.success) {
     throw AppError.badRequest(
       result.error.issues[0]?.message ?? "Invalid algorithm data.",

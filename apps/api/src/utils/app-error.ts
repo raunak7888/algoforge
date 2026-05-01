@@ -5,6 +5,8 @@ export class AppError extends Error {
     public readonly code: string,
   ) {
     super(message);
+    this.name = "AppError";
+    Object.setPrototypeOf(this, new.target.prototype);
   }
 
   static badRequest(message: string): AppError {
@@ -21,6 +23,10 @@ export class AppError extends Error {
 
   static notFound(message: string): AppError {
     return new AppError(404, message, "NOT_FOUND");
+  }
+
+  static tooManyRequests(message: string): AppError {
+    return new AppError(429, message, "TOO_MANY_REQUESTS");
   }
 
   static badGateway(message: string): AppError {

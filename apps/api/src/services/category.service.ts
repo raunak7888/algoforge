@@ -1,6 +1,5 @@
 //# filename: apps/api/src/services/category.service.ts
 
-import { randomUUID } from "crypto";
 import {
   CategoryResponseSchema,
   type CreateCategory,
@@ -37,14 +36,23 @@ class CategoryService {
   }
 
   async getCategoryById(id: string): Promise<CategoryResponse> {
-    const row = await categoryRepository.findById(id);
+    const row = await categoryRepository.findByIdentifier(id);
     if (!row) throw AppError.notFound("Category not found.");
     return serialize(row);
   }
 
   async createCategory(input: CreateCategory): Promise<CategoryResponse> {
+
+    
+    console.log("Creating category with input:", input);
+    const normalizedId = normalizeCategoryId(input.id ?? input.label);
+    console.log("Normalized category ID:", normalizedId);
+
+    const existing = await categoryRepository.findByIdentifier(normalizedId);
+    if (existing) throw AppError.badRequest("Category already exists.");
+
     const row = await categoryRepository.create({
-      id: input.id ?? randomUUID(),
+      id: normalizedId,
       label: input.label,
       description: input.description,
       iconName: input.iconName,
@@ -54,7 +62,10 @@ class CategoryService {
   }
 
   async updateCategory(id: string, input: UpdateCategory): Promise<CategoryResponse> {
-    const row = await categoryRepository.update(id, {
+    const existing = await categoryRepository.findByIdentifier(id);
+    if (!existing) throw AppError.notFound("Category not found.");
+
+    const row = await categoryRepository.update(existing.id, {
       label: input.label,
       description: input.description,
       iconName: input.iconName,
@@ -64,14 +75,32 @@ class CategoryService {
   }
 
   async deleteCategory(id: string): Promise<void> {
-    const count = await categoryRepository.countAlgorithmsInCategory(id);
+    const existing = await categoryRepository.findByIdentifier(id);
+    if (!existing) throw AppError.notFound("Category not found.");
+
+    const count = await categoryRepository.countAlgorithmsInCategory(existing.id);
     if (count > 0) {
       throw AppError.badRequest(
         "Cannot delete category with associated algorithms.",
       );
     }
-    await categoryRepository.delete(id);
+    await categoryRepository.delete(existing.id);
   }
 }
 
 export const categoryService = new CategoryService();
+
+function normalizeCategoryId(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, "")
+    .replace(/\s+/g, "-")
+    .replace(/-+/g, "-");
+}
+
+
+/*
+
+
+*/

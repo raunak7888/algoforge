@@ -63,7 +63,20 @@ export const GuardRangesSchema = z.object({
   startNode: z.enum(["first", "random"]).optional(),
 });
 
-export const InputSchema = z.record(z.string(), z.unknown());
+const JsonValueSchema: z.ZodType<
+  string | number | boolean | null | { [key: string]: unknown } | unknown[]
+> = z.lazy(() =>
+  z.union([
+    z.string(),
+    z.number(),
+    z.boolean(),
+    z.null(),
+    z.array(JsonValueSchema),
+    z.record(z.string(), JsonValueSchema),
+  ]),
+);
+
+export const InputSchema = z.record(z.string(), JsonValueSchema);
 
 // Structures that require explicit guard ranges. Stack, queue, linkedList,
 // and memory do not have configurable input constraints.

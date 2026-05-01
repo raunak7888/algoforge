@@ -1,5 +1,3 @@
-//# filename: apps/api/src/types/express.d.ts
-
 import { Role } from "@algoforge/db";
 
 declare global {
@@ -7,14 +5,15 @@ declare global {
     interface Request {
       auth?: {
         user: {
-          id: string;
-          email: string | null;
-          name: string | null;
-          image: string | null;
-          role: Role;
+          id:       string;
+          email:    string | null;
+          username: string | null;
+          name:     string | null;
+          image:    string | null;
+          role:     Role;
         };
         session: {
-          id: string;
+          id:        string;
           expiresAt: Date;
         };
       };

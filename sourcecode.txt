@@ -1,4 +1,293 @@
 ------------------------------------------------
+FILE: ./apps/api/src/ai/context-builder.ts
+------------------------------------------------
+import { prisma } from "@algoforge/db";
+
+export type CodebaseContext = {
+  algorithms: AlgorithmContext[];
+  schema: SchemaContext;
+  apiRoutes: RouteContext[];
+};
+
+type AlgorithmContext = {
+  id: string;
+  slug: string;
+  name: string;
+  description: string;
+  difficulty: string;
+  category: string;
+  displayCode: { language: string; code: string } | null;
+  complexity: {
+    timeBest: string | null;
+    timeAverage: string | null;
+    timeWorst: string | null;
+    space: string | null;
+  } | null;
+};
+
+type SchemaContext = {
+  models: ModelContext[];
+};
+
+type ModelContext = {
+  name: string;
+  fields: string[];
+};
+
+type RouteContext = {
+  method: string;
+  path: string;
+  description: string;
+};
+
+const STATIC_SCHEMA: SchemaContext = {
+  models: [
+    {
+      name: "User",
+      fields: ["id", "email", "username", "name", "image", "role", "createdAt", "updatedAt"],
+    },
+    {
+      name: "Session",
+      fields: ["id", "userId", "tokenHash", "expiresAt", "revokedAt", "ipAddress", "userAgent"],
+    },
+    {
+      name: "Analysis",
+      fields: ["id", "userId", "code", "language", "complexity", "suggestion", "result", "shareId", "isPublic", "createdAt"],
+    },
+    {
+      name: "Algorithm",
+      fields: ["id", "slug", "name", "description", "categoryId", "difficulty", "isPublished", "timeBest", "timeAverage", "timeWorst", "spaceComplexity"],
+    },
+    {
+      name: "Category",
+      fields: ["id", "label", "description", "iconName", "sortOrder"],
+    },
+    {
+      name: "ForgeConfig",
+      fields: ["id", "algorithmId", "forgeCode", "inputSchema", "guardRanges", "version"],
+    },
+    {
+      name: "DisplayCode",
+      fields: ["id", "algorithmId", "language", "code"],
+    },
+  ],
+};
+
+const STATIC_ROUTES: RouteContext[] = [
+  { method: "GET", path: "/api/auth/me", description: "Returns authenticated user profile from JWT session" },
+  { method: "POST", path: "/api/auth/refresh", description: "Rotates refresh token and issues new access token via cookie" },
+  { method: "POST", path: "/api/auth/logout", description: "Revokes current session and clears auth cookies" },
+  { method: "GET", path: "/api/algorithms", description: "Lists published algorithms with optional categoryId, difficulty, search filters" },
+  { method: "GET", path: "/api/algorithms/id/:id", description: "Fetches full algorithm detail by UUID" },
+  { method: "GET", path: "/api/algorithms/slug/:slug", description: "Fetches algorithm detail by slug" },
+  { method: "GET", path: "/api/algorithms/id/:id/visualize", description: "Returns forge execution config for algorithm visualization" },
+  { method: "POST", path: "/api/analysis", description: "Runs AI code analysis and stores result for authenticated user" },
+  { method: "GET", path: "/api/analysis", description: "Lists paginated analysis history for authenticated user" },
+  { method: "GET", path: "/api/analysis/:id", description: "Fetches a single analysis by ID for authenticated user" },
+  { method: "POST", path: "/api/analysis/:id/share", description: "Makes an analysis public and returns a share URL" },
+  { method: "GET", path: "/api/share/:shareId", description: "Returns publicly shared analysis by shareId" },
+  { method: "GET", path: "/api/categories", description: "Lists all categories sorted by sortOrder" },
+  { method: "POST", path: "/api/explain", description: "Accepts natural language query and returns AI explanation mapped to codebase" },
+];
+
+export async function buildCodebaseContext(slugs?: string[]): Promise<CodebaseContext> {
+  const where = slugs?.length
+    ? { slug: { in: slugs }, isPublished: true }
+    : { isPublished: true };
+
+  const algorithms = await prisma.algorithm.findMany({
+    where,
+    take: 10,
+    include: {
+      category: { select: { label: true } },
+      displayCodes: true,
+    },
+    orderBy: { createdAt: "desc" },
+  });
+
+  const algorithmContexts: AlgorithmContext[] = algorithms.map((algo) => {
+    const jsCode = algo.displayCodes.find((dc) => dc.language === "javascript");
+    const firstCode = algo.displayCodes[0] ?? null;
+
+    return {
+      id: algo.id,
+      slug: algo.slug,
+      name: algo.name,
+      description: algo.description,
+      difficulty: algo.difficulty,
+      category: algo.category.label,
+      displayCode: jsCode ?? (firstCode ? { language: firstCode.language, code: firstCode.code } : null),
+      complexity:
+        algo.timeBest || algo.timeAverage || algo.timeWorst || algo.spaceComplexity
+          ? {
+              timeBest: algo.timeBest,
+              timeAverage: algo.timeAverage,
+              timeWorst: algo.timeWorst,
+              space: algo.spaceComplexity,
+            }
+          : null,
+    };
+  });
+
+  return {
+    algorithms: algorithmContexts,
+    schema: STATIC_SCHEMA,
+    apiRoutes: STATIC_ROUTES,
+  };
+}
+
+export function serializeContext(ctx: CodebaseContext): string {
+  const sections: string[] = [];
+
+  sections.push("=== DATABASE SCHEMA ===");
+  for (const model of ctx.schema.models) {
+    sections.push(`Model ${model.name}: [${model.fields.join(", ")}]`);
+  }
+
+  sections.push("\n=== API ROUTES ===");
+  for (const route of ctx.apiRoutes) {
+    sections.push(`${route.method} ${route.path} — ${route.description}`);
+  }
+
+  if (ctx.algorithms.length > 0) {
+    sections.push("\n=== ALGORITHMS ===");
+    for (const algo of ctx.algorithms) {
+      sections.push(`[${algo.slug}] ${algo.name} (${algo.difficulty}, category: ${algo.category})`);
+      sections.push(`  Description: ${algo.description}`);
+      if (algo.complexity) {
+        sections.push(
+          `  Complexity: time=${algo.complexity.timeAverage ?? "?"}, space=${algo.complexity.space ?? "?"}`,
+        );
+      }
+      if (algo.displayCode) {
+        const snippet = algo.displayCode.code.slice(0, 600);
+        sections.push(`  Code (${algo.displayCode.language}):\n${snippet}${algo.displayCode.code.length > 600 ? "\n  [truncated]" : ""}`);
+      }
+    }
+  }
+
+  return sections.join("\n");
+}
+
+------------------------------------------------
+FILE: ./apps/api/src/ai/query-processor.ts
+------------------------------------------------
+export type QueryScope = {
+  intent: "explain_flow" | "explain_failure" | "explain_algorithm" | "explain_api" | "general";
+  keywords: string[];
+  targetSlugs: string[];
+  targetRoutes: string[];
+  rawQuery: string;
+};
+
+const KNOWN_SLUGS = [
+  "bubble-sort", "merge-sort", "quick-sort", "insertion-sort", "selection-sort",
+  "binary-search", "linear-search", "bfs", "dfs", "dijkstra", "a-star",
+  "heap-sort", "counting-sort", "radix-sort", "two-sum", "linked-list",
+];
+
+const ROUTE_KEYWORDS: Record<string, string[]> = {
+  "/api/auth": ["auth", "login", "logout", "session", "token", "refresh", "google", "oauth"],
+  "/api/analysis": ["analysis", "analyze", "ai", "code analysis"],
+  "/api/algorithms": ["algorithm", "visualize", "forge"],
+  "/api/categories": ["category", "categories"],
+  "/api/share": ["share", "public", "shareId"],
+  "/api/explain": ["explain", "explanation"],
+};
+
+export function processQuery(query: string): QueryScope {
+  const lower = query.toLowerCase();
+
+  const intent = detectIntent(lower);
+  const keywords = extractKeywords(lower);
+  const targetSlugs = matchSlugs(lower);
+  const targetRoutes = matchRoutes(lower);
+
+  return {
+    intent,
+    keywords,
+    targetSlugs,
+    targetRoutes,
+    rawQuery: query,
+  };
+}
+
+function detectIntent(query: string): QueryScope["intent"] {
+  if (/why.*(fail|error|broken|wrong|crash|not work)/i.test(query)) {
+    return "explain_failure";
+  }
+  if (/how.*(happen|work|flow|process|execut)/i.test(query)) {
+    return "explain_flow";
+  }
+  if (/api|endpoint|route|request|response/i.test(query)) {
+    return "explain_api";
+  }
+  if (/algorithm|sort|search|graph|tree|heap|stack|queue/i.test(query)) {
+    return "explain_algorithm";
+  }
+  return "general";
+}
+
+function extractKeywords(query: string): string[] {
+  const stopWords = new Set([
+    "this", "that", "the", "is", "are", "was", "were", "a", "an", "and",
+    "or", "but", "in", "on", "at", "to", "for", "of", "with", "by",
+    "how", "why", "what", "when", "where", "which", "who",
+  ]);
+  return query
+    .split(/\s+/)
+    .map((w) => w.replace(/[^a-z0-9-]/g, ""))
+    .filter((w) => w.length > 2 && !stopWords.has(w));
+}
+
+function matchSlugs(query: string): string[] {
+  return KNOWN_SLUGS.filter((slug) => {
+    const normalized = slug.replace(/-/g, " ");
+    return query.includes(slug) || query.includes(normalized);
+  });
+}
+
+function matchRoutes(query: string): string[] {
+  const matched: string[] = [];
+  for (const [route, keywords] of Object.entries(ROUTE_KEYWORDS)) {
+    if (keywords.some((kw) => query.includes(kw))) {
+      matched.push(route);
+    }
+  }
+  return matched;
+}
+
+------------------------------------------------
+FILE: ./apps/api/src/ai/response-formatter.ts
+------------------------------------------------
+import type { QueryScope } from "./query-processor";
+
+export type ExplanationResponse = {
+  query: string;
+  intent: string;
+  explanation: string;
+  relevantFiles: string[];
+  relevantRoutes: string[];
+  cachedAt?: string;
+};
+
+export function formatExplanationResponse(
+  rawExplanation: string,
+  scope: QueryScope,
+  relevantRoutes: string[],
+  fromCache = false,
+): ExplanationResponse {
+  return {
+    query: scope.rawQuery,
+    intent: scope.intent,
+    explanation: rawExplanation.trim(),
+    relevantFiles: scope.targetSlugs.map((s) => `algorithms/${s}`),
+    relevantRoutes,
+    ...(fromCache ? { cachedAt: new Date().toISOString() } : {}),
+  };
+}
+
+------------------------------------------------
 FILE: ./apps/api/src/app.ts
 ------------------------------------------------
 import cors from "cors";
@@ -7,38 +296,64 @@ import { env } from "./config/env";
 import { errorHandler } from "./middleware/error-handler";
 import { notFoundHandler } from "./middleware/not-found";
 import { securityHeaders } from "./middleware/security-headers";
-import analysisRouter from "./routes/analysis";
-import authRouter from "./routes/auth";
-import shareRouter from "./routes/share";
-import categoryRouter from "./routes/category";
-import algorithmRouter from "./routes/algorithm";
+import { generalRateLimiter } from "./middleware/rate-limit";
+
+// ── Routers ───────────────────────────────────────────────────────────────────
+import adminRouter              from "./routes/admin";
+import algorithmRouter          from "./routes/algorithm";
+import analysisRouter           from "./routes/analysis";
+import authRouter               from "./routes/auth";
+import categoryRouter           from "./routes/category";
+import shareRouter              from "./routes/share";
+import explanationRouter        from "./routes/exaplantion";        // one-shot POST /api/explain
+import explanationSessionRouter from "./routes/explanation-session"; // persistent sessions
 
 const app = express();
 
 app.set("trust proxy", 1);
 
+// ── Global middleware ─────────────────────────────────────────────────────────
 app.use(securityHeaders);
 app.use(
   cors({
-    origin: env.webAppUrl,
-    credentials: true,
-    methods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "X-CSRF-Token"],
+    origin:         env.webAppUrl,
+    credentials:    true,
+    methods:        ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "X-CSRF-Token", "X-Admin-Secret"],
   }),
 );
 app.use(express.json({ limit: "256kb" }));
 
+// ── Health ────────────────────────────────────────────────────────────────────
 app.get("/health", (_req, res) => {
   res.json({ status: "ok", timestamp: new Date().toISOString() });
 });
 
+// ── Auth ──────────────────────────────────────────────────────────────────────
 app.use("/api/auth", authRouter);
-app.use("/api/analysis", analysisRouter);
-app.use("/api/analyses", analysisRouter);
-app.use("/api/share", shareRouter);
-app.use("/api/categories", categoryRouter);
-app.use("/api/algorithms", algorithmRouter);
 
+// ── Algorithms + categories ───────────────────────────────────────────────────
+app.use("/api/algorithms", generalRateLimiter(), algorithmRouter);
+app.use("/api/categories", categoryRouter);
+
+// ── Analysis ──────────────────────────────────────────────────────────────────
+app.use("/api/analysis",  generalRateLimiter(), analysisRouter);
+app.use("/api/analyses",  generalRateLimiter(), analysisRouter); // alias
+
+// ── AI explain ────────────────────────────────────────────────────────────────
+// IMPORTANT: sessions route MUST be registered before the generic explain route.
+// Express does prefix matching with app.use, so the more-specific path must
+// come first to prevent the generic router from intercepting session requests.
+app.use("/api/explain/sessions", explanationSessionRouter); // persistent chat CRUD
+app.use("/api/explain",          explanationRouter);         // one-shot stateless
+
+// ── Public share ──────────────────────────────────────────────────────────────
+app.use("/api/share", shareRouter);
+
+// ── Admin ─────────────────────────────────────────────────────────────────────
+app.use("/api/admin", adminRouter);
+
+// ── Fallthrough ───────────────────────────────────────────────────────────────
 app.use(notFoundHandler);
 app.use(errorHandler);
 
@@ -56,26 +371,16 @@ type AIProvider = (typeof AI_PROVIDERS)[number];
 
 function requireEnv(name: string): string {
   const value = process.env[name];
-
-  if (!value) {
-    throw new Error(`Missing required environment variable: ${name}`);
-  }
-
+  if (!value) throw new Error(`Missing required environment variable: ${name}`);
   return value;
 }
 
 function parseInteger(name: string, fallback: number): number {
   const rawValue = process.env[name];
-
-  if (!rawValue) {
-    return fallback;
-  }
-
+  if (!rawValue) return fallback;
   const parsed = Number(rawValue);
-  if (!Number.isInteger(parsed) || parsed <= 0) {
+  if (!Number.isInteger(parsed) || parsed <= 0)
     throw new Error(`Environment variable ${name} must be a positive integer.`);
-  }
-
   return parsed;
 }
 
@@ -85,30 +390,20 @@ function parseStringEnum<T extends string>(
   fallback: T,
 ): T {
   const rawValue = process.env[name];
-
-  if (!rawValue) {
-    return fallback;
-  }
-
-  if (!allowedValues.includes(rawValue as T)) {
+  if (!rawValue) return fallback;
+  if (!allowedValues.includes(rawValue as T))
     throw new Error(
       `Environment variable ${name} must be one of: ${allowedValues.join(", ")}.`,
     );
-  }
-
   return rawValue as T;
 }
 
 function parseList(name: string): string[] {
   const rawValue = process.env[name];
-
-  if (!rawValue) {
-    return [];
-  }
-
+  if (!rawValue) return [];
   return rawValue
     .split(",")
-    .map((value) => value.trim())
+    .map((v) => v.trim())
     .filter(Boolean);
 }
 
@@ -134,6 +429,8 @@ export const env = {
   authIssuer: process.env.AUTH_ISSUER ?? "algoforge-api",
   authAudience: process.env.AUTH_AUDIENCE ?? "algoforge-web",
   geminiApiKey: requireEnv("GEMINI_API_KEY"),
+  adminUpgradeSecret:
+    process.env.ADMIN_UPGRADE_SECRET ?? "1d201bf1-eb81-42ec-bd13-3e627b0fc4e9",
   ai: {
     provider: aiProvider as AIProvider,
     model: process.env.AI_MODEL ?? "gemini-2.0-flash",
@@ -141,11 +438,18 @@ export const env = {
     maxRetries: parseInteger("AI_MAX_RETRIES", 1),
   },
   openRouter: {
-    baseUrl: process.env.OPENROUTER_BASE_URL ?? "https://openrouter.ai/api/v1",
+    baseUrl:
+      process.env.OPENROUTER_BASE_URL ?? "https://openrouter.ai/api/v1",
     apiKeys: parseList("OPENROUTER_API_KEYS"),
     freeModels: parseList("OPENROUTER_FREE_MODELS"),
     appName: process.env.OPENROUTER_APP_NAME ?? "AlgoForge",
     siteUrl: process.env.OPENROUTER_SITE_URL ?? process.env.WEB_APP_URL,
+  },
+  redis: {
+    url: process.env.REDIS_URL ?? "redis://localhost:6379",
+    ttlSeconds: parseInteger("REDIS_CACHE_TTL_SECONDS", 3600),
+    aiRateLimitPerHour: parseInteger("AI_RATE_LIMIT_PER_HOUR", 5),
+    defaultRateLimitPerMinute: parseInteger("DEFAULT_RATE_LIMIT_PER_MINUTE", 10),
   },
 };
 
@@ -162,70 +466,190 @@ export const googleOAuthConfig = {
 };
 
 ------------------------------------------------
+FILE: ./apps/api/src/config/redis.ts
+------------------------------------------------
+import Redis from "ioredis";
+import { env } from "./env";
+
+let _client: Redis | null = null;
+let _healthy = false;
+
+export function getRedisClient(): Redis {
+  if (!_client) {
+    _client = new Redis(env.redis.url, {
+      maxRetriesPerRequest: 2,
+      enableReadyCheck: true,
+      lazyConnect: true,
+      retryStrategy(times) {
+        if (times > 5) return null; // stop retrying after 5 attempts
+        return Math.min(times * 200, 2000);
+      },
+    });
+
+    _client.on("ready", () => {
+      _healthy = true;
+      if (!env.isProduction) console.info("[Redis] Ready.");
+    });
+
+    _client.on("error", (err: Error) => {
+      _healthy = false;
+      if (!env.isProduction) console.error("[Redis] Error:", err.message);
+    });
+
+    _client.on("close", () => {
+      _healthy = false;
+    });
+  }
+
+  return _client;
+}
+
+export function isRedisHealthy(): boolean {
+  return _healthy;
+}
+
+export async function connectRedis(): Promise<void> {
+  const client = getRedisClient();
+  try {
+    await client.connect();
+  } catch (err) {
+    // ioredis throws if already connected — suppress that
+    const message = err instanceof Error ? err.message : String(err);
+    if (!message.includes("already")) {
+      throw err;
+    }
+  }
+}
+
+export async function closeRedis(): Promise<void> {
+  if (_client) {
+    await _client.quit();
+    _client = null;
+    _healthy = false;
+  }
+}
+
+------------------------------------------------
+FILE: ./apps/api/src/controllers/admin.controller.ts
+------------------------------------------------
+//# filename: apps/api/src/controllers/admin.controller.ts
+
+import { Request, Response } from "express";
+import { adminService } from "../services/admin.service";
+import { asyncHandler } from "../utils/async-handler";
+import { AppError } from "../utils/app-error";
+
+class AdminController {
+  /**
+   * POST /api/admin/upgrade-user
+   * Body: { userId: string }
+   * Role is always hardcoded server-side. Never read from body.
+   */
+  upgradeUser = asyncHandler(async (req: Request, res: Response) => {
+    const { userId } = req.body as { userId?: unknown };
+    if (typeof userId !== "string" || !userId.trim()) {
+      throw AppError.badRequest("userId is required.");
+    }
+    const result = await adminService.upgradeToAdmin(userId.trim());
+    res.json({
+      changed: result.changed,
+      user: {
+        id: result.user.id,
+        email: result.user.email,
+        role: result.user.role,
+      },
+    });
+  });
+
+  /**
+   * POST /api/admin/downgrade-user
+   * Body: { userId: string }
+   */
+  downgradeUser = asyncHandler(async (req: Request, res: Response) => {
+    const { userId } = req.body as { userId?: unknown };
+    if (typeof userId !== "string" || !userId.trim()) {
+      throw AppError.badRequest("userId is required.");
+    }
+    const result = await adminService.downgradeToUser(userId.trim());
+    res.json({
+      changed: result.changed,
+      user: {
+        id: result.user.id,
+        email: result.user.email,
+        role: result.user.role,
+      },
+    });
+  });
+
+  listUsers = asyncHandler(async (_req: Request, res: Response) => {
+    const users = await adminService.listAllUsers();
+    res.json({ users });
+  });
+}
+
+export const adminController = new AdminController();
+
+------------------------------------------------
 FILE: ./apps/api/src/controllers/algorithm.controller.ts
 ------------------------------------------------
 import { Request, Response } from "express";
-import { algorithmService } from "../services/algorithm.service";
+import { algorithmService } from "../services/algorithm/index";
 import { asyncHandler } from "../utils/async-handler";
 import { ensureString } from "../validation/common";
 import {
-    parseCreateAlgorithm,
-    parseUpdateAlgorithm,
-    parseAlgorithmQuery,
+  parseCreateAlgorithm,
+  parseUpdateAlgorithm,
+  parseAlgorithmQuery,
 } from "../validation/algorithm";
 
 class AlgorithmController {
-    list = asyncHandler(async (req: Request, res: Response) => {
-        const query = parseAlgorithmQuery(req.query);
-        const algorithms = await algorithmService.listAlgorithms(query);
-        res.json(algorithms);
-    });
+  list = asyncHandler(async (req: Request, res: Response) => {
+    const query      = parseAlgorithmQuery(req.query);
+    const algorithms = await algorithmService.listAlgorithms(query);
+    res.json(algorithms);
+  });
 
-    getById = asyncHandler(async (req: Request, res: Response) => {
-        const id = ensureString(req.params.id, "Algorithm ID is required.");
-        const algorithm = await algorithmService.getAlgorithmById(id);
-        res.json(algorithm);
-    });
+  getById = asyncHandler(async (req: Request, res: Response) => {
+    const id        = ensureString(req.params.id, "Algorithm ID is required.");
+    const lang      = typeof req.query.lang === "string" ? req.query.lang : undefined;
+    const algorithm = await algorithmService.getAlgorithmById(id, lang);
+    res.json(algorithm);
+  });
 
-    getBySlug = asyncHandler(async (req: Request, res: Response) => {
-        const slug = ensureString(
-            req.params.slug,
-            "Algorithm slug is required.",
-        );
-        const algorithm = await algorithmService.getAlgorithmBySlug(slug);
-        res.json(algorithm);
-    });
+  getBySlug = asyncHandler(async (req: Request, res: Response) => {
+    const slug      = ensureString(req.params.slug, "Algorithm slug is required.");
+    const lang      = typeof req.query.lang === "string" ? req.query.lang : undefined;
+    const algorithm = await algorithmService.getAlgorithmBySlug(slug, lang);
+    res.json(algorithm);
+  });
 
-    getVisualize = asyncHandler(async (req: Request, res: Response) => {
-        const id = ensureString(req.params.id, "Algorithm ID is required.");
-        const execution = await algorithmService.getAlgorithmExecution(id);
-        res.json(execution);
-    });
+  getVisualize = asyncHandler(async (req: Request, res: Response) => {
+    const id        = ensureString(req.params.id, "Algorithm ID is required.");
+    const execution = await algorithmService.getAlgorithmExecution(id);
+    res.json(execution);
+  });
 
-    create = asyncHandler(async (req: Request, res: Response) => {
-        console.log(req.body)
-        const input = parseCreateAlgorithm(req.body);
-        console.log(input)
-        const createdAlgorithm = await algorithmService.createAlgorithm(input);
-        res.status(201).json(createdAlgorithm);
-    });
+  create = asyncHandler(async (req: Request, res: Response) => {
+    const input   = parseCreateAlgorithm(req.body);
+    const created = await algorithmService.createAlgorithm(input);
+    res.status(201).json(created);
+  });
 
-    update = asyncHandler(async (req: Request, res: Response) => {
-        const id = ensureString(req.params.id, "Algorithm ID is required.");
-        const input = parseUpdateAlgorithm(req.body);
-        const updatedAlgorithm = await algorithmService.updateAlgorithm(id, input);
-        res.status(200).json(updatedAlgorithm);
-    });
+  update = asyncHandler(async (req: Request, res: Response) => {
+    const id      = ensureString(req.params.id, "Algorithm ID is required.");
+    const input   = parseUpdateAlgorithm(req.body);
+    const updated = await algorithmService.updateAlgorithm(id, input);
+    res.status(200).json(updated);
+  });
 
-    delete = asyncHandler(async (req: Request, res: Response) => {
-        const id = ensureString(req.params.id, "Algorithm ID is required.");
-        await algorithmService.deleteAlgorithm(id);
-        res.status(204).send();
-    });
+  delete = asyncHandler(async (req: Request, res: Response) => {
+    const id = ensureString(req.params.id, "Algorithm ID is required.");
+    await algorithmService.deleteAlgorithm(id);
+    res.status(204).send();
+  });
 }
 
 export const algorithmController = new AlgorithmController();
-
 
 ------------------------------------------------
 FILE: ./apps/api/src/controllers/analysis.controller.ts
@@ -238,39 +662,37 @@ import { parseAnalysisHistoryQuery, parseAnalysisInput } from "../validation/ana
 
 class AnalysisController {
   createAnalysis = asyncHandler(async (req: Request, res: Response) => {
-    const input = parseAnalysisInput(req.body);
+    const input    = parseAnalysisInput(req.body);
     const analysis = await analysisService.createAnalysis(req.auth!.user.id, input);
-
     res.status(201).json(analysis);
   });
 
   listAnalyses = asyncHandler(async (req: Request, res: Response) => {
-    const query = parseAnalysisHistoryQuery(req.query);
+    const query    = parseAnalysisHistoryQuery(req.query);
     const analyses = await analysisService.listUserAnalyses(req.auth!.user.id, query);
     res.json(analyses);
   });
 
   getAnalysisById = asyncHandler(async (req: Request, res: Response) => {
-    const analysisId = ensureString(req.params.id, "Analysis id is required.");
-    const analysis = await analysisService.getUserAnalysisById(req.auth!.user.id, analysisId);
+    const id       = ensureString(req.params.id, "Analysis id is required.");
+    const analysis = await analysisService.getUserAnalysisById(req.auth!.user.id, id);
     res.json(analysis);
   });
 
   shareAnalysis = asyncHandler(async (req: Request, res: Response) => {
-    const analysisId = ensureString(req.params.id, "Analysis id is required.");
-    const result = await analysisService.shareAnalysis(req.auth!.user.id, analysisId);
+    const id     = ensureString(req.params.id, "Analysis id is required.");
+    const result = await analysisService.shareAnalysis(req.auth!.user.id, id);
     res.json(result);
   });
 
   getPublicAnalysis = asyncHandler(async (req: Request, res: Response) => {
     const shareId = ensureString(req.params.shareId, "Share id is required.");
-    const result = await analysisService.getPublicAnalysis(shareId);
+    const result  = await analysisService.getPublicAnalysis(shareId);
     res.json(result);
   });
 }
 
 export const analysisController = new AnalysisController();
-
 
 ------------------------------------------------
 FILE: ./apps/api/src/controllers/auth.controller.ts
@@ -434,8 +856,147 @@ class CategoryController {
 export const categoryController = new CategoryController();
 
 ------------------------------------------------
+FILE: ./apps/api/src/controllers/explanation-session.controller.ts
+------------------------------------------------
+import { Request, Response } from "express";
+import { explanationSessionService } from "../services/explanation-session.service";
+import { asyncHandler } from "../utils/async-handler";
+import {
+  parseCreateSession,
+  parseSendMessage,
+  parseListSessionsQuery,
+} from "../validation/explanation-session";
+import { ensureString } from "../validation/common";
+
+class ExplanationSessionController {
+  create = asyncHandler(async (req: Request, res: Response) => {
+    const input   = parseCreateSession(req.body);
+    const session = await explanationSessionService.createSession(req.auth!.user.id, input);
+    res.status(201).json(session);
+  });
+
+  list = asyncHandler(async (req: Request, res: Response) => {
+    const query  = parseListSessionsQuery(req.query);
+    const result = await explanationSessionService.listSessions(req.auth!.user.id, query);
+    res.json(result);
+  });
+
+  getById = asyncHandler(async (req: Request, res: Response) => {
+    const id      = ensureString(req.params.id, "Session id is required.");
+    const session = await explanationSessionService.getSession(req.auth!.user.id, id);
+    res.json(session);
+  });
+
+  sendMessage = asyncHandler(async (req: Request, res: Response) => {
+    const id     = ensureString(req.params.id, "Session id is required.");
+    const input  = parseSendMessage(req.body);
+    const result = await explanationSessionService.sendMessage(req.auth!.user.id, id, input);
+    res.status(201).json(result);
+  });
+
+  delete = asyncHandler(async (req: Request, res: Response) => {
+    const id = ensureString(req.params.id, "Session id is required.");
+    await explanationSessionService.deleteSession(req.auth!.user.id, id);
+    res.status(204).send();
+  });
+
+  share = asyncHandler(async (req: Request, res: Response) => {
+    const id     = ensureString(req.params.id, "Session id is required.");
+    const result = await explanationSessionService.shareSession(req.auth!.user.id, id);
+    res.json(result);
+  });
+
+  getPublic = asyncHandler(async (req: Request, res: Response) => {
+    const shareId = ensureString(req.params.shareId, "Share id is required.");
+    const session = await explanationSessionService.getPublicSession(shareId);
+    res.json(session);
+  });
+}
+
+export const explanationSessionController = new ExplanationSessionController();
+
+------------------------------------------------
+FILE: ./apps/api/src/controllers/explanation.controller.ts
+------------------------------------------------
+import { Request, Response } from "express";
+import { explanationService } from "../services/explanation.service";
+import { asyncHandler } from "../utils/async-handler";
+import { AppError } from "../utils/app-error";
+
+class ExplanationController {
+  explain = asyncHandler(async (req: Request, res: Response) => {
+    const { query } = req.body as { query?: unknown };
+    if (typeof query !== "string" || !query.trim()) {
+      throw AppError.badRequest("Field 'query' is required and must be a non-empty string.");
+    }
+    const result = await explanationService.explain(query.trim());
+    res.json(result);
+  });
+}
+
+export const explanationController = new ExplanationController();
+
+------------------------------------------------
+FILE: ./apps/api/src/middleware/admin-secret.ts
+------------------------------------------------
+//# filename: apps/api/src/middleware/admin-secret.ts
+
+import { NextFunction, Request, Response } from "express";
+import { Role } from "@algoforge/db";
+import { env } from "../config/env";
+import { authService } from "../services/auth.service";
+import { AppError } from "../utils/app-error";
+import { getToken } from "./auth";
+
+/**
+ * Grants access if EITHER:
+ *   1. X-Admin-Secret header matches ADMIN_UPGRADE_SECRET env var (non-empty).
+ *   2. The request carries a valid JWT for an ADMIN user.
+ *
+ * Role is NEVER read from the request body. The secret must come from the
+ * environment; a blank env var disables secret-based access entirely.
+ */
+export async function requireAdminAccess(
+  req: Request,
+  _res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    // Path 1 — env secret
+    const headerSecret = req.get("X-Admin-Secret");
+    if (
+      headerSecret &&
+      env.adminUpgradeSecret.length > 0 &&
+      headerSecret === env.adminUpgradeSecret
+    ) {
+      req.adminViaSecret = true;
+      return next();
+    }
+
+    // Path 2 — authenticated admin JWT
+    const accessToken = getToken(req);
+    if (!accessToken) {
+      return next(AppError.unauthorized("Authentication required."));
+    }
+
+    const auth = await authService.authenticateAccessToken(accessToken);
+
+    if (auth.user.role !== Role.ADMIN) {
+      return next(AppError.forbidden("Insufficient permissions."));
+    }
+
+    req.auth = auth;
+    next();
+  } catch (error) {
+    next(error);
+  }
+}
+
+------------------------------------------------
 FILE: ./apps/api/src/middleware/auth.ts
 ------------------------------------------------
+//# filename: apps/api/src/middleware/auth.ts
+
 import { NextFunction, Request, Response } from "express";
 import { Role } from "@algoforge/db";
 import { authCookies } from "../config/env";
@@ -462,11 +1023,9 @@ export async function requireAuth(
 ): Promise<void> {
   try {
     const accessToken = getToken(req);
-
     if (!accessToken) {
       return next(AppError.unauthorized("Authentication required."));
     }
-
     req.auth = await authService.authenticateAccessToken(accessToken);
     next();
   } catch (error) {
@@ -479,11 +1038,9 @@ export function requireRoles(...roles: Role[]) {
     if (!req.auth) {
       return next(AppError.unauthorized("Authentication required."));
     }
-
     if (!roles.includes(req.auth.user.role)) {
       return next(AppError.forbidden("Insufficient permissions."));
     }
-
     next();
   };
 }
@@ -515,35 +1072,34 @@ export function requireCsrf(
 FILE: ./apps/api/src/middleware/error-handler.ts
 ------------------------------------------------
 import { NextFunction, Request, Response } from "express";
-import { JsonWebTokenError, TokenExpiredError } from "jsonwebtoken";
 import { AppError } from "../utils/app-error";
+import { env } from "../config/env";
 
 export function errorHandler(
-  error: unknown,
+  err: unknown,
   _req: Request,
   res: Response,
   _next: NextFunction,
 ): void {
-  if (error instanceof AppError) {
-    res.status(error.statusCode).json({
-      error: error.message,
-      code: error.code,
+  if (err instanceof AppError) {
+    res.status(err.statusCode).json({
+      error: {
+        code: err.code,
+        message: err.message,
+      },
     });
     return;
   }
 
-  if (error instanceof TokenExpiredError || error instanceof JsonWebTokenError) {
-    res.status(401).json({
-      error: "Authentication failed.",
-      code: "AUTH_INVALID",
-    });
-    return;
+  if (!env.isProduction) {
+    console.error("[Unhandled Error]", err);
   }
 
-  console.error("[Unhandled Error]", error);
   res.status(500).json({
-    error: "Internal server error.",
-    code: "INTERNAL_ERROR",
+    error: {
+      code: "INTERNAL_ERROR",
+      message: "An unexpected error occurred.",
+    },
   });
 }
 
@@ -559,6 +1115,135 @@ export function notFoundHandler(_req: Request, res: Response): void {
   });
 }
 
+
+------------------------------------------------
+FILE: ./apps/api/src/middleware/rate-limit.ts
+------------------------------------------------
+import { NextFunction, Request, Response } from "express";
+import { getRedisClient } from "../config/redis";
+import { env } from "../config/env";
+import { AppError } from "../utils/app-error";
+
+function getClientIp(req: Request): string {
+  const forwarded = req.headers["x-forwarded-for"];
+  if (typeof forwarded === "string") {
+    return forwarded.split(",")[0].trim();
+  }
+  return req.ip ?? "unknown";
+}
+
+/**
+ * Atomic fixed-window counter via Lua script.
+ * Guarantees INCR + EXPIRE happen as a single Redis operation.
+ * Used for AI endpoint: N requests per hour per IP.
+ */
+const FIXED_WINDOW_SCRIPT = `
+local current = redis.call('INCR', KEYS[1])
+if current == 1 then
+  redis.call('EXPIRE', KEYS[1], tonumber(ARGV[1]))
+end
+return current
+`;
+
+export function aiRateLimiter() {
+  return async (req: Request, _res: Response, next: NextFunction): Promise<void> => {
+    const ip = getClientIp(req);
+    const windowSeconds = 3600;
+    const windowSlot = Math.floor(Date.now() / (windowSeconds * 1000));
+    const key = `rl:ai:${ip}:${windowSlot}`;
+    const limit = env.redis.aiRateLimitPerHour;
+
+    try {
+      const redis = getRedisClient();
+      const count = await redis.eval(
+        FIXED_WINDOW_SCRIPT,
+        1,
+        key,
+        String(windowSeconds),
+      ) as number;
+
+      if (count > limit) {
+        const ttl = await redis.ttl(key);
+        next(
+          AppError.tooManyRequests(
+            `AI rate limit exceeded. Limit: ${limit}/hour. Retry in ${ttl}s.`,
+          ),
+        );
+        return;
+      }
+
+      next();
+    } catch (err) {
+      if (err instanceof AppError) {
+        next(err);
+        return;
+      }
+      // Redis failure → fail open (do not block the request)
+      next();
+    }
+  };
+}
+
+/**
+ * Atomic sliding-window counter via Lua script.
+ * Removes stale entries and checks count in a single atomic operation.
+ * Used for general endpoints: N requests per minute per IP.
+ */
+const SLIDING_WINDOW_SCRIPT = `
+local key = KEYS[1]
+local now = tonumber(ARGV[1])
+local windowMs = tonumber(ARGV[2])
+local limit = tonumber(ARGV[3])
+local member = ARGV[4]
+local cutoff = now - windowMs
+redis.call('ZREMRANGEBYSCORE', key, '-inf', cutoff)
+redis.call('ZADD', key, now, member)
+redis.call('PEXPIRE', key, windowMs)
+return redis.call('ZCARD', key)
+`;
+
+export function generalRateLimiter() {
+  return async (req: Request, _res: Response, next: NextFunction): Promise<void> => {
+    const ip = getClientIp(req);
+    const windowMs = 60_000;
+    const limit = env.redis.defaultRateLimitPerMinute;
+    const key = `rl:general:${ip}`;
+    const now = Date.now();
+    // Unique member: timestamp + counter avoids member collisions under high concurrency
+    const member = `${now}:${process.hrtime.bigint().toString()}`;
+
+    try {
+      const redis = getRedisClient();
+      const count = await redis.eval(
+        SLIDING_WINDOW_SCRIPT,
+        1,
+        key,
+        String(now),
+        String(windowMs),
+        String(limit),
+        member,
+      ) as number;
+
+      if (count > limit) {
+        next(
+          AppError.tooManyRequests(
+            `Rate limit exceeded. Limit: ${limit} requests/minute.`,
+          ),
+        );
+        return;
+      }
+
+      next();
+    } catch (err) {
+      if (err instanceof AppError) {
+        next(err);
+        return;
+      }
+      // Redis failure → fail open
+      next();
+    }
+  };
+}
 
 ------------------------------------------------
 FILE: ./apps/api/src/middleware/security-headers.ts
@@ -641,8 +1326,660 @@ ${input.code}
 }
 
 ------------------------------------------------
+FILE: ./apps/api/src/prompts/explanation.prompt.ts
+------------------------------------------------
+import type { QueryScope } from "../ai/query-processor";
+
+export function buildExplanationPrompt(
+  contextText: string,
+  scope: QueryScope,
+): string {
+  return `You are a senior backend engineer. Answer the user's query about this codebase precisely and concisely.
+
+USER QUERY: "${scope.rawQuery}"
+DETECTED INTENT: ${scope.intent}
+KEYWORDS: ${scope.keywords.join(", ")}
+
+CODEBASE CONTEXT:
+${contextText}
+
+RULES:
+- Be direct. No padding.
+- explain_failure: state the most likely root cause from the code.
+- explain_flow: trace the request lifecycle step by step.
+- explain_algorithm: cover logic, complexity, and edge cases.
+- explain_api: describe request → middleware → service → DB → response.
+- Use plain text only. No markdown headers or code fences.
+- Maximum 250 words.
+
+Answer:`;
+}
+
+------------------------------------------------
+FILE: ./apps/api/src/prompts/explanation.prompts.ts
+------------------------------------------------
+
+
+------------------------------------------------
+FILE: ./apps/api/src/repositories/algorithm.repository.ts
+------------------------------------------------
+//# filename: apps/api/src/repositories/algorithm.repository.ts
+
+import { prisma, Prisma } from "@algoforge/db";
+import type { Difficulty } from "@algoforge/db";
+
+const listSelect = {
+  id: true,
+  slug: true,
+  name: true,
+  categoryId: true,
+  difficulty: true,
+  timeBest: true,
+  timeAverage: true,
+  timeWorst: true,
+  spaceComplexity: true,
+} as const;
+
+const detailSelect = {
+  id: true,
+  slug: true,
+  name: true,
+  description: true,
+  difficulty: true,
+  categoryId: true,
+  isPublished: true,
+  timeBest: true,
+  timeAverage: true,
+  timeWorst: true,
+  spaceComplexity: true,
+  displayCodes: { select: { language: true, code: true } },
+  forge: {
+    select: {
+      forgeCode: true,
+      inputSchema: true,
+      guardRanges: true,
+      version: true,
+    },
+  },
+  tags: { select: { tag: { select: { id: true, label: true } } } },
+} as const;
+
+export type AlgorithmListRow = Awaited<
+  ReturnType<typeof algorithmRepository.findMany>
+>[number];
+
+export type AlgorithmDetailRow = Awaited<
+  ReturnType<typeof algorithmRepository.findById>
+>;
+
+export const algorithmRepository = {
+  findMany(where: Prisma.AlgorithmWhereInput) {
+    return prisma.algorithm.findMany({
+      where,
+      select: listSelect,
+      orderBy: { createdAt: "desc" },
+    });
+  },
+
+  findById(id: string) {
+    return prisma.algorithm.findUnique({ where: { id }, select: detailSelect });
+  },
+
+  findBySlug(slug: string) {
+    return prisma.algorithm.findUnique({ where: { slug }, select: detailSelect });
+  },
+
+  findBySlugExists(slug: string) {
+    return prisma.algorithm.findUnique({
+      where: { slug },
+      select: { id: true },
+    });
+  },
+
+  findByIdWithForge(id: string) {
+    return prisma.algorithm.findUnique({
+      where: { id },
+      include: { forge: true },
+    });
+  },
+
+  create(data: {
+    slug: string;
+    name: string;
+    description: string;
+    categoryId: string;
+    difficulty: Difficulty;
+    isPublished: boolean;
+    timeBest: string | null;
+    timeAverage: string | null;
+    timeWorst: string | null;
+    spaceComplexity: string | null;
+    displayCodes: { language: string; code: string }[];
+    forge: {
+      forgeCode: Prisma.InputJsonValue;
+      inputSchema: Prisma.InputJsonValue;
+      guardRanges: Prisma.InputJsonValue;
+    };
+    tags: string[];
+  }) {
+    return prisma.algorithm.create({
+      data: {
+        slug: data.slug,
+        name: data.name,
+        description: data.description,
+        categoryId: data.categoryId,
+        difficulty: data.difficulty,
+        isPublished: data.isPublished,
+        timeBest: data.timeBest,
+        timeAverage: data.timeAverage,
+        timeWorst: data.timeWorst,
+        spaceComplexity: data.spaceComplexity,
+        displayCodes: { create: data.displayCodes },
+        forge: { create: data.forge },
+        tags: {
+          create: data.tags.map((label) => ({
+            tag: {
+              connectOrCreate: {
+                where: { label },
+                create: { label },
+              },
+            },
+          })),
+        },
+      },
+      select: detailSelect,
+    });
+  },
+
+  update(
+    id: string,
+    data: Prisma.AlgorithmUpdateInput & {
+      displayCodes?: { language: string; code: string }[];
+      tags?: string[];
+    },
+  ) {
+    const { displayCodes, tags, ...rest } = data;
+
+    return prisma.$transaction(async (tx) => {
+      if (displayCodes) {
+        await tx.displayCode.deleteMany({ where: { algorithmId: id } });
+        await tx.displayCode.createMany({
+          data: displayCodes.map((dc) => ({ ...dc, algorithmId: id })),
+        });
+      }
+
+      if (tags) {
+        await tx.algorithmTag.deleteMany({ where: { algorithmId: id } });
+        for (const label of tags) {
+          const tag = await tx.tag.upsert({
+            where: { label },
+            create: { label },
+            update: {},
+          });
+          await tx.algorithmTag.create({
+            data: { algorithmId: id, tagId: tag.id },
+          });
+        }
+      }
+
+      return tx.algorithm.update({
+        where: { id },
+        data: rest,
+        select: detailSelect,
+      });
+    });
+  },
+
+  delete(id: string) {
+    return prisma.algorithm.delete({ where: { id } });
+  },
+
+  upsertForge(
+    algorithmId: string,
+    forge: {
+      forgeCode: Prisma.InputJsonValue;
+      inputSchema: Prisma.InputJsonValue;
+      guardRanges: Prisma.InputJsonValue;
+    },
+  ) {
+    return prisma.forgeConfig.upsert({
+      where: { algorithmId },
+      create: { algorithmId, ...forge },
+      update: forge,
+    });
+  },
+};
+
+------------------------------------------------
+FILE: ./apps/api/src/repositories/analysis.repository.ts
+------------------------------------------------
+//# filename: apps/api/src/repositories/analysis.repository.ts
+
+import { prisma, Prisma } from "@algoforge/db";
+
+export const analysisRepository = {
+  create(data: {
+    userId: string;
+    code: string;
+    language: string;
+    complexity: string | null;
+    suggestion: string | null;
+    result: Prisma.InputJsonValue;
+  }) {
+    return prisma.analysis.create({
+      data,
+      select: { id: true, language: true, result: true, createdAt: true },
+    });
+  },
+
+  findManyByUser(
+    userId: string,
+    opts: {
+      cursorCreatedAt?: Date;
+      cursorId?: string;
+      take: number;
+    },
+  ) {
+    return prisma.analysis.findMany({
+      where: {
+        userId,
+        ...(opts.cursorCreatedAt && opts.cursorId
+          ? {
+              OR: [
+                { createdAt: { lt: opts.cursorCreatedAt } },
+                {
+                  createdAt: { equals: opts.cursorCreatedAt },
+                  id: { lt: opts.cursorId },
+                },
+              ],
+            }
+          : {}),
+      },
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      take: opts.take,
+      select: {
+        id: true,
+        language: true,
+        complexity: true,
+        suggestion: true,
+        createdAt: true,
+      },
+    });
+  },
+
+  findOneByUser(userId: string, analysisId: string) {
+    return prisma.analysis.findFirst({
+      where: { id: analysisId, userId },
+      select: { id: true, language: true, result: true, createdAt: true },
+    });
+  },
+
+  findForShare(analysisId: string, userId: string) {
+    return prisma.analysis.findFirst({ where: { id: analysisId, userId } });
+  },
+
+  setPublic(analysisId: string, shareId: string) {
+    return prisma.analysis.update({
+      where: { id: analysisId },
+      data: { shareId, isPublic: true },
+    });
+  },
+
+  findPublicByShareId(shareId: string) {
+    return prisma.analysis.findUnique({
+      where: { shareId, isPublic: true },
+      select: {
+        id: true,
+        code: true,
+        language: true,
+        result: true,
+        createdAt: true,
+        isPublic: true,
+        user: { select: { id: true, name: true, username: true, image: true } },
+      },
+    });
+  },
+};
+
+------------------------------------------------
+FILE: ./apps/api/src/repositories/category.repository.ts
+------------------------------------------------
+//# filename: apps/api/src/repositories/category.repository.ts
+
+import { prisma } from "@algoforge/db";
+
+export const categoryRepository = {
+  findAll() {
+    return prisma.category.findMany({ orderBy: { sortOrder: "asc" } });
+  },
+
+  findById(id: string) {
+    return prisma.category.findUnique({ where: { id } });
+  },
+
+  create(data: {
+    id: string;
+    label: string;
+    description?: string;
+    iconName?: string;
+    sortOrder: number;
+  }) {
+    return prisma.category.create({ data });
+  },
+
+  update(
+    id: string,
+    data: {
+      label?: string;
+      description?: string;
+      iconName?: string;
+      sortOrder?: number;
+    },
+  ) {
+    return prisma.category.update({ where: { id }, data });
+  },
+
+  delete(id: string) {
+    return prisma.category.delete({ where: { id } });
+  },
+
+  countAlgorithmsInCategory(id: string) {
+    return prisma.algorithm.count({ where: { categoryId: id } });
+  },
+};
+
+------------------------------------------------
+FILE: ./apps/api/src/repositories/explanation-session.repository.ts
+------------------------------------------------
+import { prisma } from "@algoforge/db";
+import type { SessionMessage } from "../services/explanation-session.service";
+
+export const explanationSessionRepository = {
+  // ─── Create ────────────────────────────────────────────────────────────────
+
+  create(userId: string, title?: string) {
+    return prisma.explanationSession.create({
+      data: { userId, title: title ?? null, messages: [] },
+    });
+  },
+
+  // ─── Read ──────────────────────────────────────────────────────────────────
+
+  /** Paginated list — keyset by id (cursor = last seen id). */
+  findManyByUser(userId: string, opts: { take: number; cursor?: string }) {
+    return prisma.explanationSession.findMany({
+      where: {
+        userId,
+        ...(opts.cursor ? { id: { lt: opts.cursor } } : {}),
+      },
+      orderBy: { createdAt: "desc" },
+      take:    opts.take,
+      select:  {
+        id:        true,
+        title:     true,
+        isPublic:  true,
+        shareId:   true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    });
+  },
+
+  /** Full session including messages — only accessible by owner. */
+  findOneByUser(id: string, userId: string) {
+    return prisma.explanationSession.findFirst({
+      where: { id, userId },
+    });
+  },
+
+  /** Public session by shareId — includes basic creator info. */
+  findPublicByShareId(shareId: string) {
+    return prisma.explanationSession.findUnique({
+      where:   { shareId, isPublic: true },
+      include: {
+        user: { select: { id: true, name: true, username: true, image: true } },
+      },
+    });
+  },
+
+  // ─── Update ────────────────────────────────────────────────────────────────
+
+  /** Replace the messages array and optionally update the title. */
+  appendMessages(id: string, messages: SessionMessage[], title?: string) {
+    return prisma.explanationSession.update({
+      where: { id },
+      data:  {
+        messages: messages as object[],
+        ...(title ? { title } : {}),
+      },
+    });
+  },
+
+  /** Make the session public and set its shareId. */
+  share(id: string, shareId: string) {
+    return prisma.explanationSession.update({
+      where: { id },
+      data:  { shareId, isPublic: true },
+    });
+  },
+
+  // ─── Delete ────────────────────────────────────────────────────────────────
+
+  /** Hard-delete — returns count so callers can detect not-found. */
+  delete(id: string, userId: string) {
+    return prisma.explanationSession.deleteMany({ where: { id, userId } });
+  },
+};
+
+------------------------------------------------
+FILE: ./apps/api/src/repositories/explanation.repository.ts
+------------------------------------------------
+
+
+------------------------------------------------
+FILE: ./apps/api/src/repositories/session.repository.ts
+------------------------------------------------
+//# filename: apps/api/src/repositories/session.repository.ts
+
+import { prisma } from "@algoforge/db";
+
+const userSelect = {
+  id: true,
+  email: true,
+  username: true,
+  name: true,
+  image: true,
+  role: true,
+} as const;
+
+export const sessionRepository = {
+  create(data: {
+    id: string;
+    userId: string;
+    tokenHash: string;
+    expiresAt: Date;
+    lastUsedAt: Date;
+    ipAddress: string | null;
+    userAgent: string | null;
+    rotatedFromId?: string;
+  }) {
+    return prisma.session.create({ data });
+  },
+
+  findActiveById(sessionId: string, userId: string) {
+    return prisma.session.findFirst({
+      where: {
+        id: sessionId,
+        userId,
+        revokedAt: null,
+        expiresAt: { gt: new Date() },
+      },
+      select: {
+        id: true,
+        expiresAt: true,
+        user: { select: userSelect },
+      },
+    });
+  },
+
+  findByIdWithUser(sessionId: string) {
+    return prisma.session.findUnique({
+      where: { id: sessionId },
+      include: { user: { select: userSelect } },
+    });
+  },
+
+  /**
+   * Atomically revokes the current session and creates a rotated replacement.
+   * Returns null if the session could not be exclusively revoked (reuse detected).
+   */
+  async rotate(
+    currentId: string,
+    currentUserId: string,
+    currentTokenHash: string,
+    next: {
+      id: string;
+      tokenHash: string;
+      expiresAt: Date;
+      lastUsedAt: Date;
+      ipAddress: string | null;
+      userAgent: string | null;
+    },
+  ) {
+    const now = new Date();
+
+    return prisma.$transaction(async (tx) => {
+      const revoked = await tx.session.updateMany({
+        where: {
+          id: currentId,
+          userId: currentUserId,
+          tokenHash: currentTokenHash,
+          revokedAt: null,
+          expiresAt: { gt: now },
+        },
+        data: { revokedAt: now, lastUsedAt: now },
+      });
+
+      if (revoked.count !== 1) return null;
+
+      return tx.session.create({
+        data: {
+          ...next,
+          userId: currentUserId,
+          rotatedFromId: currentId,
+        },
+      });
+    });
+  },
+
+  revokeById(sessionId: string, userId?: string) {
+    return prisma.session.updateMany({
+      where: { id: sessionId, ...(userId ? { userId } : {}), revokedAt: null },
+      data: { revokedAt: new Date() },
+    });
+  },
+
+  revokeAllForUser(userId: string) {
+    return prisma.session.updateMany({
+      where: { userId, revokedAt: null },
+      data: { revokedAt: new Date() },
+    });
+  },
+};
+
+------------------------------------------------
+FILE: ./apps/api/src/repositories/user.repository.ts
+------------------------------------------------
+//# filename: apps/api/src/repositories/user.repository.ts
+
+import { prisma } from "@algoforge/db";
+import { Role } from "@algoforge/db";
+
+const userSelect = {
+  id: true,
+  email: true,
+  username: true,
+  name: true,
+  image: true,
+  role: true,
+} as const;
+
+export const userRepository = {
+  findById(id: string) {
+    return prisma.user.findUnique({ where: { id }, select: userSelect });
+  },
+
+  findByEmail(email: string) {
+    return prisma.user.findUnique({ where: { email }, select: userSelect });
+  },
+
+  findPublicById(id: string) {
+    return prisma.user.findUnique({
+      where: { id },
+      select: { id: true, name: true, username: true, image: true },
+    });
+  },
+
+  create(data: {
+    email: string | null;
+    name: string | null;
+    image: string | null;
+    role: Role;
+  }) {
+    return prisma.user.create({ data, select: userSelect });
+  },
+
+  updateProfile(
+    id: string,
+    data: { email?: string | null; name?: string | null; image?: string | null },
+  ) {
+    return prisma.user.update({ where: { id }, data, select: userSelect });
+  },
+
+  setRole(id: string, role: Role) {
+    return prisma.user.update({ where: { id }, data: { role }, select: userSelect });
+  },
+};
+
+------------------------------------------------
+FILE: ./apps/api/src/routes/admin.ts
+------------------------------------------------
+//# filename: apps/api/src/routes/admin.ts
+
+import { Router } from "express";
+import { adminController } from "../controllers/admin.controller";
+import { requireAdminAccess } from "../middleware/admin-secret";
+import { requireCsrf } from "../middleware/csrf";
+
+const router = Router();
+
+// All admin management routes require admin access (JWT admin OR env secret).
+// CSRF is also required to protect against cross-site requests.
+// Role is never accepted from any request body — it is hardcoded per endpoint.
+
+router.get("/users", requireAdminAccess, adminController.listUsers);
+
+router.post(
+  "/upgrade-user",
+  requireAdminAccess,
+  requireCsrf,
+  adminController.upgradeUser,
+);
+
+router.post(
+  "/downgrade-user",
+  requireAdminAccess,
+  requireCsrf,
+  adminController.downgradeUser,
+);
+
+export default router;
+
+------------------------------------------------
 FILE: ./apps/api/src/routes/algorithm.ts
 ------------------------------------------------
+//# filename: apps/api/src/routes/algorithm.ts
+
 import { Router } from "express";
 import { Role } from "@algoforge/db";
 import { algorithmController } from "../controllers/algorithm.controller";
@@ -652,11 +1989,13 @@ import { validateIdParam, validateSlugParam } from "../validation/algorithm";
 
 const router = Router();
 
+// Public reads — optional ?lang=javascript|python query param
 router.get("/", algorithmController.list);
 router.get("/slug/:slug", validateSlugParam, algorithmController.getBySlug);
 router.get("/id/:id/visualize", validateIdParam, algorithmController.getVisualize);
 router.get("/id/:id", validateIdParam, algorithmController.getById);
 
+// Admin writes
 router.post(
   "/",
   requireAuth,
@@ -771,14 +2110,69 @@ router.delete(
 export default router;
 
 ------------------------------------------------
+FILE: ./apps/api/src/routes/exaplantion.ts
+------------------------------------------------
+import { Router } from "express";
+import { explanationController } from "../controllers/explanation.controller";
+import { requireAuth } from "../middleware/auth";
+import { requireCsrf } from "../middleware/csrf";
+import { aiRateLimiter } from "../middleware/rate-limit";
+
+const router = Router();
+
+router.post(
+  "/",
+  requireAuth,
+  requireCsrf,
+  aiRateLimiter(),
+  explanationController.explain,
+);
+
+export default router;
+
+------------------------------------------------
+FILE: ./apps/api/src/routes/explanation-session.ts
+------------------------------------------------
+import { Router } from "express";
+import { explanationSessionController } from "../controllers/explanation-session.controller";
+import { requireAuth } from "../middleware/auth";
+import { requireCsrf } from "../middleware/csrf";
+import { aiRateLimiter } from "../middleware/rate-limit";
+
+const router = Router();
+
+// ── Authenticated session CRUD ────────────────────────────────────────────────
+
+router.get(  "/",           requireAuth,                         explanationSessionController.list);
+router.post( "/",           requireAuth, requireCsrf,            explanationSessionController.create);
+router.get(  "/:id",        requireAuth,                         explanationSessionController.getById);
+router.delete("/:id",       requireAuth, requireCsrf,            explanationSessionController.delete);
+
+// Sending a message triggers AI — apply the AI rate limiter
+router.post( "/:id/messages", requireAuth, requireCsrf, aiRateLimiter(), explanationSessionController.sendMessage);
+
+// Share (makes session public, returns a share URL)
+router.post( "/:id/share",  requireAuth, requireCsrf,            explanationSessionController.share);
+
+export default router;
+
+------------------------------------------------
 FILE: ./apps/api/src/routes/share.ts
 ------------------------------------------------
 import { Router } from "express";
 import { analysisController } from "../controllers/analysis.controller";
+import { explanationSessionController } from "../controllers/explanation-session.controller";
 
 const router = Router();
 
+// Public analysis share
+router.get("/analysis/:shareId", analysisController.getPublicAnalysis);
+
+// Legacy route kept for backward compatibility
 router.get("/:shareId", analysisController.getPublicAnalysis);
+
+// Public explanation session share
+router.get("/explain/:shareId", explanationSessionController.getPublic);
 
 export default router;
 
@@ -787,13 +2181,111 @@ FILE: ./apps/api/src/server.ts
 ------------------------------------------------
 import { app } from "./app";
 import { env } from "./config/env";
+import { connectRedis, closeRedis } from "./config/redis";
 
-app.listen(env.port, () => {
-  if (!env.isProduction) {
-    console.log(`[API] Server running at ${env.apiBaseUrl}`);
-    console.log(`[API] Health check: ${env.apiBaseUrl}/health`);
+async function bootstrap(): Promise<void> {
+  // Attempt Redis connection; non-fatal — rate limiting and caching degrade gracefully
+  try {
+    await connectRedis();
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.warn(`[Redis] Startup connection failed: ${message}. Continuing without Redis.`);
   }
+
+  const server = app.listen(env.port, () => {
+    if (!env.isProduction) {
+      console.log(`[API] Running at ${env.apiBaseUrl}`);
+      console.log(`[API] Health: ${env.apiBaseUrl}/health`);
+    }
+  });
+
+  async function shutdown(signal: string): Promise<void> {
+    if (!env.isProduction) {
+      console.log(`[API] ${signal} — shutting down.`);
+    }
+    server.close(async () => {
+      await closeRedis();
+      process.exit(0);
+    });
+
+    // Force exit if graceful shutdown stalls
+    setTimeout(() => process.exit(1), 10_000).unref();
+  }
+
+  process.on("SIGTERM", () => { void shutdown("SIGTERM"); });
+  process.on("SIGINT",  () => { void shutdown("SIGINT"); });
+  process.on("uncaughtException", (err) => {
+    console.error("[API] Uncaught exception:", err);
+    void shutdown("uncaughtException");
+  });
+  process.on("unhandledRejection", (reason) => {
+    console.error("[API] Unhandled rejection:", reason);
+  });
+}
+
+bootstrap().catch((err) => {
+  console.error("[API] Failed to start:", err);
+  process.exit(1);
 });
+
+------------------------------------------------
+FILE: ./apps/api/src/services/admin.service.ts
+------------------------------------------------
+//# filename: apps/api/src/services/admin.service.ts
+
+import { Role } from "@algoforge/db";
+import { userRepository } from "../repositories/user.repository";
+import { AppError } from "../utils/app-error";
+
+class AdminService {
+  /**
+   * Promotes userId to ADMIN.
+   * Role is always hardcoded here — it is never accepted from the request body.
+   */
+  async upgradeToAdmin(userId: string) {
+    const user = await userRepository.findById(userId);
+    if (!user) throw AppError.notFound("User not found.");
+
+    if (user.role === Role.ADMIN) {
+      return { user, changed: false };
+    }
+
+    const updated = await userRepository.setRole(userId, Role.ADMIN);
+    return { user: updated, changed: true };
+  }
+
+  /**
+   * Demotes userId to USER.
+   * Role is always hardcoded here — it is never accepted from the request body.
+   */
+  async downgradeToUser(userId: string) {
+    const user = await userRepository.findById(userId);
+    if (!user) throw AppError.notFound("User not found.");
+
+    if (user.role === Role.USER) {
+      return { user, changed: false };
+    }
+
+    const updated = await userRepository.setRole(userId, Role.USER);
+    return { user: updated, changed: true };
+  }
+
+  async listAllUsers() {
+    const { prisma } = await import("@algoforge/db");
+    return prisma.user.findMany({
+      orderBy: { createdAt: "desc" },
+      select: {
+        id: true,
+        email: true,
+        name: true,
+        role: true,
+        createdAt: true,
+      },
+    });
+  }
+}
+
+export const adminService = new AdminService();
 
 ------------------------------------------------
 FILE: ./apps/api/src/services/ai.service.ts
@@ -806,9 +2298,8 @@ import {
 import { env } from "../config/env";
 import { buildAnalysisPrompt } from "../prompts/analysis.prompt";
 import { AppError } from "../utils/app-error";
-import type { AIMessage, AIProvider } from "./providers/ai-provider";
-import { GeminiProvider } from "./providers/gemini.provider";
-import { OpenRouterProvider } from "./providers/openrouter.provider";
+import { getAIProvider } from "./providers/provider-factory";
+import type { AIMessage } from "./providers/ai-provider";
 
 type AnalyzeCodeInput = {
   code: string;
@@ -816,908 +2307,544 @@ type AnalyzeCodeInput = {
 };
 
 class AIService {
-  constructor(private readonly provider: AIProvider) {}
-
   async analyzeCode(input: AnalyzeCodeInput): Promise<AnalysisResult> {
     const prompt = buildAnalysisPrompt(input);
-    const messages: AIMessage[] = [
-      {
-        role: "user",
-        content: prompt,
-      },
-    ];
-
-    this.logInfo(`Using provider "${this.provider.name}" for analysis.`);
+    const raw = await this.generate(
+      [{ role: "user", content: prompt }],
+      "json",
+    );
+    const sanitized = sanitizeJson(raw);
 
     try {
-      const response = await this.withTimeout(
-        this.provider.generate({ messages }),
+      const parsed = JSON.parse(sanitized) as unknown;
+      return AnalysisResultSchema.parse(parsed);
+    } catch (error) {
+      if (error instanceof SyntaxError) {
+        throw AppError.badGateway("AI provider returned invalid JSON.");
+      }
+      throw AppError.badGateway("AI provider returned an invalid analysis payload.");
+    }
+  }
+
+  async generateText(messages: AIMessage[]): Promise<string> {
+    return this.generate(messages, "text");
+  }
+
+  private async generate(
+    messages: AIMessage[],
+    responseFormat: "json" | "text",
+  ): Promise<string> {
+    const provider = getAIProvider();
+
+    try {
+      const response = await withTimeout(
+        provider.generate({ messages, responseFormat }),
         env.ai.timeoutMs,
       );
-      const sanitizedResponse = sanitizeAiJson(response.message.content);
-      const parsedResponse = JSON.parse(sanitizedResponse) as unknown;
-
-      this.logInfo(
-        `Provider "${this.provider.name}" succeeded with model "${response.model}".`,
-      );
-
-      return AnalysisResultSchema.parse(parsedResponse);
+      return response.message.content;
     } catch (error) {
-      this.logError(`Provider "${this.provider.name}" failed.`, error);
-      throw this.normalizeError(error);
-    }
-  }
-
-  private async withTimeout<T>(
-    promise: Promise<T>,
-    timeoutMs: number,
-  ): Promise<T> {
-    let timeoutId: NodeJS.Timeout | undefined;
-
-    try {
-      return await Promise.race([
-        promise,
-        new Promise<T>((_, reject) => {
-          timeoutId = setTimeout(() => {
-            reject(AppError.badGateway("AI provider request timed out."));
-          }, timeoutMs);
-        }),
-      ]);
-    } finally {
-      if (timeoutId) {
-        clearTimeout(timeoutId);
-      }
-    }
-  }
-
-  private normalizeError(error: unknown): AppError {
-    if (error instanceof AppError) {
-      return error;
-    }
-
-    if (error instanceof SyntaxError) {
-      return AppError.badGateway("AI provider returned invalid JSON.");
-    }
-
-    if (
-      error instanceof Error &&
-      "issues" in error &&
-      Array.isArray((error as { issues?: unknown[] }).issues)
-    ) {
-      return AppError.badGateway(
-        "AI provider returned an invalid analysis payload.",
-      );
-    }
-
-    return AppError.badGateway("AI analysis failed.");
-  }
-
-  private logInfo(message: string): void {
-    if (!env.isProduction) {
-      console.info(`[AI] ${message}`);
-    }
-  }
-
-  private logError(message: string, error: unknown): void {
-    if (!env.isProduction) {
-      console.error(`[AI] ${message}`, error);
+      if (error instanceof AppError) throw error;
+      throw AppError.badGateway("AI request failed.");
     }
   }
 }
 
-function sanitizeAiJson(value: string): string {
+function sanitizeJson(value: string): string {
   const trimmed = value.trim();
-  const fencedMatch = trimmed.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+  const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+  if (fenced?.[1]) return fenced[1].trim();
 
-  if (fencedMatch?.[1]) {
-    return fencedMatch[1].trim();
-  }
-
-  const startIndex = trimmed.indexOf("{");
-  const endIndex = trimmed.lastIndexOf("}");
-
-  if (startIndex >= 0 && endIndex > startIndex) {
-    return trimmed.slice(startIndex, endIndex + 1).trim();
-  }
+  const start = trimmed.indexOf("{");
+  const end = trimmed.lastIndexOf("}");
+  if (start >= 0 && end > start) return trimmed.slice(start, end + 1).trim();
 
   return trimmed;
 }
 
-function createProvider(): AIProvider {
-  switch (env.ai.provider) {
-    case "openrouter":
-      return new OpenRouterProvider({
-        apiKeys: env.openRouter.apiKeys,
-        freeModels: env.openRouter.freeModels,
-        baseUrl: env.openRouter.baseUrl,
-        appName: env.openRouter.appName,
-        siteUrl: env.openRouter.siteUrl,
-      });
-    case "gemini":
-    default:
-      return new GeminiProvider({
-        apiKey: env.geminiApiKey,
-        model: env.ai.model,
-      });
-  }
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(AppError.badGateway("AI provider request timed out.")),
+      ms,
+    );
+    promise.then(
+      (v) => { clearTimeout(timer); resolve(v); },
+      (e) => { clearTimeout(timer); reject(e); },
+    );
+  });
 }
 
-export const aiService = new AIService(createProvider());
+export const aiService = new AIService();
 
 ------------------------------------------------
-FILE: ./apps/api/src/services/algorithm.service.ts
+FILE: ./apps/api/src/services/algorithm/cache-keys.ts
 ------------------------------------------------
-import { prisma, Prisma, Difficulty } from "@algoforge/db";
+/**
+ * All cache key builders for algorithms in one place.
+ * Changing a key format here automatically fixes every caller.
+ */
+export const algorithmCacheKeys = {
+  // List keys are JSON-stringified query objects (hashed by cacheService internally)
+  list:    (query: object)                  => `algo:list:${JSON.stringify(query)}`,
+
+  // Detail keys are structured so we can invalidate by id/slug without re-hashing
+  byId:    (id: string,   lang = "default") => `algo:id:${id}:${lang}`,
+  bySlug:  (slug: string, lang = "default") => `algo:slug:${slug}:${lang}`,
+
+  // Visualisation / forge config
+  viz:     (id: string)                     => `viz:${id}`,
+};
+
+------------------------------------------------
+FILE: ./apps/api/src/services/algorithm/detail.service.ts
+------------------------------------------------
+/**
+ * Fetches a single algorithm by id or slug.
+ * Each (id/slug + language) combination gets its own cache entry
+ * so switching display language doesn't cause a cache miss cascade.
+ */
+import { AlgorithmDetailSchema, type AlgorithmDetail } from "@algoforge/forge";
+import { algorithmRepository, type AlgorithmDetailRow } from "../../repositories/algorithm.repository";
+import { layeredCache } from "../lib/Layered.cache";
+import { algorithmCacheKeys } from "./cache-keys";
+import { AppError } from "../../utils/app-error";
+
+export async function getAlgorithmById(id: string, lang?: string): Promise<AlgorithmDetail> {
+  const key    = algorithmCacheKeys.byId(id, lang);
+  const cached = await layeredCache.get<AlgorithmDetail>(key);
+  if (cached) return cached;
+
+  const row = await algorithmRepository.findById(id);
+  if (!row) throw AppError.notFound("Algorithm not found.");
+
+  const result = toAlgorithmDetail(row, lang);
+  await layeredCache.set(key, result);
+  return result;
+}
+
+export async function getAlgorithmBySlug(slug: string, lang?: string): Promise<AlgorithmDetail> {
+  const key    = algorithmCacheKeys.bySlug(slug, lang);
+  const cached = await layeredCache.get<AlgorithmDetail>(key);
+  if (cached) return cached;
+
+  const row = await algorithmRepository.findBySlug(slug);
+  if (!row) throw AppError.notFound("Algorithm not found.");
+
+  const result = toAlgorithmDetail(row, lang);
+  await layeredCache.set(key, result);
+  return result;
+}
+
+// ─── Private ──────────────────────────────────────────────────────────────────
+
+/**
+ * Choose the best display code for the requested language.
+ * Priority: requested lang → javascript → first available.
+ */
+function pickDisplayCode(
+  codes: { language: string; code: string }[],
+  lang?: string,
+): { language: string; code: string } | null {
+  if (!codes.length) return null;
+  const preferred = lang ?? "javascript";
+  return (
+    codes.find((c) => c.language === preferred) ??
+    codes.find((c) => c.language === "javascript") ??
+    codes[0]
+  );
+}
+
+function toAlgorithmDetail(
+  row: NonNullable<AlgorithmDetailRow>,
+  lang?: string,
+): AlgorithmDetail {
+  return AlgorithmDetailSchema.parse({
+    id:          row.id,
+    slug:        row.slug,
+    name:        row.name,
+    description: row.description,
+    difficulty:  row.difficulty,
+    complexity:
+      row.timeBest || row.timeAverage || row.timeWorst || row.spaceComplexity
+        ? {
+            timeBest:    row.timeBest,
+            timeAverage: row.timeAverage,
+            timeWorst:   row.timeWorst,
+            space:       row.spaceComplexity,
+          }
+        : null,
+    displayCode: pickDisplayCode(row.displayCodes, lang),
+    tags:        row.tags.map((t: { tag: { id: string; label: string } }) => t.tag),
+    forge:       row.forge
+      ? {
+          forgeCode:   row.forge.forgeCode,
+          inputSchema: row.forge.inputSchema,
+          guardRanges: row.forge.guardRanges,
+          version:     row.forge.version,
+        }
+      : null,
+  });
+}
+
+------------------------------------------------
+FILE: ./apps/api/src/services/algorithm/index.ts
+------------------------------------------------
+/**
+ * Public surface of the algorithm service.
+ * Controllers and other services import from here only.
+ * Internal sub-modules are implementation details and must not be imported directly.
+ */
+export { listAlgorithms } from "./query.service";
+export { getAlgorithmById, getAlgorithmBySlug } from "./detail.service";
+export { getAlgorithmVisualization as getAlgorithmExecution } from "./viz.service";
+export { createAlgorithm, updateAlgorithm, deleteAlgorithm } from "./mutation.service";
+export type { AlgorithmQuery } from "../../types/algorithm.types";
+
+import { listAlgorithms } from "./query.service";
+import { getAlgorithmById, getAlgorithmBySlug } from "./detail.service";
+import { getAlgorithmVisualization } from "./viz.service";
+import { createAlgorithm, updateAlgorithm, deleteAlgorithm } from "./mutation.service";
+
+/** Named object alias — import as `algorithmService.listAlgorithms(...)` */
+export const algorithmService = {
+  listAlgorithms,
+  getAlgorithmById,
+  getAlgorithmBySlug,
+  getAlgorithmExecution: getAlgorithmVisualization,
+  createAlgorithm,
+  updateAlgorithm,
+  deleteAlgorithm,
+};
+
+------------------------------------------------
+FILE: ./apps/api/src/services/algorithm/mutation.service.ts
+------------------------------------------------
+/**
+ * Create, update, and delete algorithms.
+ * Every mutation invalidates all related cache entries atomically.
+ */
+import { Prisma, Difficulty } from "@algoforge/db";
 import {
-  AlgorithmListItemSchema,
-  AlgorithmDetailSchema,
-  AlgorithmExecutionSchema,
   ForgeCodeSchema,
   GuardRangesSchema,
   InputSchema,
   type CreateAlgorithm,
   type UpdateAlgorithm,
-  type AlgorithmListItem,
-  type AlgorithmDetail,
-  type AlgorithmExecution,
 } from "@algoforge/forge";
-import { AppError } from "../utils/app-error";
+import { algorithmRepository } from "../../repositories/algorithm.repository";
+import { algorithmCacheKeys } from "./cache-keys";
+import { AppError } from "../../utils/app-error";
+import { layeredCache } from "../lib/Layered.cache";
 
-export type AlgorithmQuery = {
-  categoryId?: string;
-  difficulty?: string;
-  isPublished?: boolean;
-  search?: string;
-};
+// ─── Public API ───────────────────────────────────────────────────────────────
 
-class AlgorithmService {
-  async listAlgorithms(query: AlgorithmQuery): Promise<AlgorithmListItem[]> {
-    const where: Prisma.AlgorithmWhereInput = {
-      ...(query.categoryId ? { categoryId: query.categoryId } : {}),
-      ...(query.difficulty
-        ? { difficulty: query.difficulty as Difficulty }
-        : {}),
-      ...(query.isPublished !== undefined
-        ? { isPublished: query.isPublished }
-        : {}),
-      ...(query.search
-        ? {
-            OR: [
-              {
-                name: {
-                  contains: query.search,
-                  mode: Prisma.QueryMode.insensitive,
-                },
-              },
-              {
-                description: {
-                  contains: query.search,
-                  mode: Prisma.QueryMode.insensitive,
-                },
-              },
-              {
-                tags: {
-                  some: {
-                    tag: {
-                      label: {
-                        contains: query.search,
-                        mode: Prisma.QueryMode.insensitive,
-                      },
-                    },
-                  },
-                },
-              },
-            ],
-          }
-        : {}),
-    };
+export async function createAlgorithm(input: CreateAlgorithm) {
+  if (input.forge) validateForge(input.forge);
+  return algorithmRepository.create(toCreateData(input));
+}
 
-    const algorithms = await prisma.algorithm.findMany({
-      where,
-      select: {
-        id: true,
-        slug: true,
-        name: true,
-        categoryId: true,
-        difficulty: true,
-        complexity: {
-          select: {
-            timeBest: true,
-            timeAverage: true,
-            timeWorst: true,
-            space: true,
-          },
-        },
-      },
-      orderBy: { createdAt: "desc" },
-    });
+export async function updateAlgorithm(id: string, input: UpdateAlgorithm) {
+  const existing = await algorithmRepository.findById(id);
+  if (!existing) throw AppError.notFound("Algorithm not found.");
 
-    return algorithms.map((alg) => AlgorithmListItemSchema.parse(alg));
-  }
+  if (input.forge) validateForge(input.forge);
 
-  async getAlgorithmById(id: string): Promise<AlgorithmDetail> {
-    const algorithm = await prisma.algorithm.findUnique({
-      where: { id },
-      select: {
-        id: true,
-        slug: true,
-        name: true,
-        description: true,
-        difficulty: true,
-        complexity: {
-          select: {
-            timeBest: true,
-            timeAverage: true,
-            timeWorst: true,
-            space: true,
-          },
-        },
-        displayCode: {
-          select: {
-            language: true,
-            code: true,
-          },
-        },
-        tags: {
-          select: {
-            tag: {
-              select: {
-                id: true,
-                label: true,
-              },
-            },
-          },
-        },
-      },
-    });
+  const updated = await algorithmRepository.update(id, toUpdateData(input));
+  await bustCache(id, existing.slug);
+  return updated;
+}
 
-    if (!algorithm) {
-      throw AppError.notFound("Algorithm not found.");
-    }
+export async function deleteAlgorithm(id: string): Promise<void> {
+  const existing = await algorithmRepository.findById(id);
+  if (!existing) throw AppError.notFound("Algorithm not found.");
 
-    return AlgorithmDetailSchema.parse({
-      ...algorithm,
-      tags: algorithm.tags.map((t) => t.tag),
-    });
-  }
+  await algorithmRepository.delete(id);
+  await bustCache(id, existing.slug);
+}
 
-  async getAlgorithmBySlug(slug: string): Promise<AlgorithmDetail> {
-    const algorithm = await prisma.algorithm.findUnique({
-      where: { slug },
-      select: {
-        id: true,
-        slug: true,
-        name: true,
-        description: true,
-        difficulty: true,
-        complexity: {
-          select: {
-            timeBest: true,
-            timeAverage: true,
-            timeWorst: true,
-            space: true,
-          },
-        },
-        displayCode: {
-          select: {
-            language: true,
-            code: true,
-          },
-        },
-        tags: {
-          select: {
-            tag: {
-              select: {
-                id: true,
-                label: true,
-              },
-            },
-          },
-        },
-      },
-    });
+// ─── Private ──────────────────────────────────────────────────────────────────
 
-    if (!algorithm) {
-      throw AppError.notFound("Algorithm not found.");
-    }
+async function bustCache(id: string, slug: string): Promise<void> {
+  await Promise.all([
+    layeredCache.del(algorithmCacheKeys.byId(id)),
+    layeredCache.del(algorithmCacheKeys.bySlug(slug)),
+    layeredCache.del(algorithmCacheKeys.viz(id)),
+  ]);
+}
 
-    return AlgorithmDetailSchema.parse({
-      ...algorithm,
-      tags: algorithm.tags.map((t) => t.tag),
-    });
-  }
-
-  async getAlgorithmExecution(id: string): Promise<AlgorithmExecution> {
-    const algorithm = await prisma.algorithm.findUnique({
-      where: { id },
-      include: {
-        forge: true,
-      },
-    });
-
-    if (!algorithm) {
-      throw AppError.notFound("Algorithm not found.");
-    }
-
-    if (!algorithm.forge) {
-      if (algorithm.isPublished) {
-        console.error(
-          `[Data Integrity Error] Published algorithm ${algorithm.id} is missing forge data.`,
-        );
-      }
-      return AlgorithmExecutionSchema.parse({
-        status: "INCOMPLETE_ALGORITHM",
-        message: "Algorithm has no visualization data",
-      });
-    }
-
-    try {
-      ForgeCodeSchema.parse(algorithm.forge.forgeCode);
-      GuardRangesSchema.parse(algorithm.forge.guardRanges);
-      InputSchema.parse(algorithm.forge.inputSchema);
-    } catch (error) {
-      console.error(
-        `[Data Integrity Error] Corrupted forge data for algorithm ${algorithm.id}:`,
-        error instanceof Error ? error.message : "Unknown error",
-      );
-      throw AppError.internal("Invalid forge configuration stored in database");
-    }
-
-    return AlgorithmExecutionSchema.parse({
-      algorithmId: algorithm.id,
-      name: algorithm.name,
-      forge: {
-        forgeCode: algorithm.forge.forgeCode,
-        inputSchema: algorithm.forge.inputSchema,
-        guardRanges: algorithm.forge.guardRanges,
-        version: algorithm.forge.version,
-      },
-    });
-  }
-
-  async createAlgorithm(input: CreateAlgorithm): Promise<AlgorithmDetail> {
-    const existing = await prisma.algorithm.findUnique({
-      where: { slug: input.slug },
-    });
-
-    if (existing) {
-      throw AppError.badRequest("Algorithm with this slug already exists.");
-    }
-
-    try {
-      ForgeCodeSchema.parse(input.forge.forgeCode);
-      GuardRangesSchema.parse(input.forge.guardRanges);
-      InputSchema.parse(input.forge.inputSchema);
-    } catch (error: unknown) {
-      throw AppError.badRequest(
-        "Invalid forge configuration: " +
-          (error instanceof Error ? error.message : "Unknown error"),
-      );
-    }
-
-    const createdAlgorithm = await prisma.$transaction(async (tx) => {
-      return tx.algorithm.create({
-        data: {
-          slug: input.slug,
-          name: input.name,
-          description: input.description,
-          categoryId: input.categoryId,
-          difficulty: input.difficulty,
-          isPublished: input.isPublished ?? false,
-          complexity: {
-            create: {
-              timeBest: input.complexity.time.best,
-              timeAverage: input.complexity.time.average,
-              timeWorst: input.complexity.time.worst,
-              space: input.complexity.space,
-            },
-          },
-          displayCode: {
-            create: {
-              language: input.displayCode.language,
-              code: input.displayCode.code,
-            },
-          },
-          forge: {
-            create: {
-              forgeCode:
-                input.forge.forgeCode as unknown as Prisma.InputJsonValue,
-              inputSchema:
-                input.forge.inputSchema as unknown as Prisma.InputJsonValue,
-              guardRanges:
-                input.forge.guardRanges as unknown as Prisma.InputJsonValue,
-            },
-          },
-          tags: {
-            create: input.tags.map((tagLabel) => ({
-              tag: {
-                connectOrCreate: {
-                  where: { label: tagLabel },
-                  create: { label: tagLabel },
-                },
-              },
-            })),
-          },
-        },
-        include: {
-          complexity: true,
-          displayCode: true,
-          forge: true,
-          tags: {
-            include: {
-              tag: true,
-            },
-          },
-        },
-      });
-    });
-
-    return AlgorithmDetailSchema.parse({
-      id: createdAlgorithm.id,
-      slug: createdAlgorithm.slug,
-      name: createdAlgorithm.name,
-      description: createdAlgorithm.description,
-      difficulty: createdAlgorithm.difficulty,
-      complexity: createdAlgorithm.complexity
-        ? {
-            timeBest: createdAlgorithm.complexity.timeBest,
-            timeAverage: createdAlgorithm.complexity.timeAverage,
-            timeWorst: createdAlgorithm.complexity.timeWorst,
-            space: createdAlgorithm.complexity.space,
-          }
-        : null,
-      displayCode: createdAlgorithm.displayCode
-        ? {
-            language: createdAlgorithm.displayCode.language,
-            code: createdAlgorithm.displayCode.code,
-          }
-        : null,
-      tags: createdAlgorithm.tags.map((t) => t.tag),
-    });
-  }
-
-  async updateAlgorithm(
-    id: string,
-    input: UpdateAlgorithm,
-  ): Promise<AlgorithmDetail> {
-    const existing = await prisma.algorithm.findUnique({
-      where: { id },
-      include: {
-        complexity: true,
-        displayCode: true,
-        forge: true,
-        tags: true,
-      },
-    });
-
-    if (!existing) {
-      throw AppError.notFound("Algorithm not found.");
-    }
-
-    if (input.forge) {
-      try {
-        if (input.forge.forgeCode) ForgeCodeSchema.parse(input.forge.forgeCode);
-        if (input.forge.guardRanges)
-          GuardRangesSchema.parse(input.forge.guardRanges);
-        if (input.forge.inputSchema)
-          InputSchema.parse(input.forge.inputSchema);
-      } catch (error: unknown) {
-        throw AppError.badRequest(
-          "Invalid forge configuration: " +
-            (error instanceof Error ? error.message : "Unknown error"),
-        );
-      }
-    }
-
-    const updatedAlgorithm = await prisma.$transaction(async (tx) => {
-      const data: Prisma.AlgorithmUpdateInput = {};
-
-      if (input.slug !== undefined) data.slug = input.slug;
-      if (input.name !== undefined) data.name = input.name;
-      if (input.description !== undefined) data.description = input.description;
-      if (input.categoryId !== undefined)
-        data.category = { connect: { id: input.categoryId } };
-      if (input.difficulty !== undefined) data.difficulty = input.difficulty;
-      if (input.isPublished !== undefined) data.isPublished = input.isPublished;
-
-      if (input.complexity) {
-        data.complexity = {
-          upsert: {
-            create: {
-              timeBest:
-                input.complexity.time?.best ??
-                existing.complexity?.timeBest ??
-                null,
-              timeAverage:
-                input.complexity.time?.average ??
-                existing.complexity?.timeAverage ??
-                null,
-              timeWorst:
-                input.complexity.time?.worst ??
-                existing.complexity?.timeWorst ??
-                null,
-              space:
-                input.complexity.space ?? existing.complexity?.space ?? null,
-            },
-            update: {
-              ...(input.complexity.time?.best !== undefined
-                ? { timeBest: input.complexity.time.best }
-                : {}),
-              ...(input.complexity.time?.average !== undefined
-                ? { timeAverage: input.complexity.time.average }
-                : {}),
-              ...(input.complexity.time?.worst !== undefined
-                ? { timeWorst: input.complexity.time.worst }
-                : {}),
-              ...(input.complexity.space !== undefined
-                ? { space: input.complexity.space }
-                : {}),
-            },
-          },
-        };
-      }
-
-      if (input.displayCode) {
-        data.displayCode = {
-          upsert: {
-            create: {
-              language:
-                input.displayCode.language ??
-                existing.displayCode?.language ??
-                "js",
-              code:
-                input.displayCode.code ?? existing.displayCode?.code ?? "",
-            },
-            update: {
-              ...(input.displayCode.language !== undefined
-                ? { language: input.displayCode.language }
-                : {}),
-              ...(input.displayCode.code !== undefined
-                ? { code: input.displayCode.code }
-                : {}),
-            },
-          },
-        };
-      }
-
-      if (input.forge) {
-        data.forge = {
-          upsert: {
-            create: {
-              forgeCode: (input.forge.forgeCode ??
-                existing.forge?.forgeCode ??
-                {}) as unknown as Prisma.InputJsonValue,
-              inputSchema: (input.forge.inputSchema ??
-                existing.forge?.inputSchema ??
-                {}) as unknown as Prisma.InputJsonValue,
-              guardRanges: (input.forge.guardRanges ??
-                existing.forge?.guardRanges ??
-                {}) as unknown as Prisma.InputJsonValue,
-            },
-            update: {
-              ...(input.forge.forgeCode
-                ? {
-                    forgeCode:
-                      input.forge.forgeCode as unknown as Prisma.InputJsonValue,
-                  }
-                : {}),
-              ...(input.forge.inputSchema
-                ? {
-                    inputSchema:
-                      input.forge.inputSchema as unknown as Prisma.InputJsonValue,
-                  }
-                : {}),
-              ...(input.forge.guardRanges
-                ? {
-                    guardRanges:
-                      input.forge.guardRanges as unknown as Prisma.InputJsonValue,
-                  }
-                : {}),
-            },
-          },
-        };
-      }
-
-      if (input.tags) {
-        data.tags = {
-          deleteMany: {},
-          create: input.tags.map((tagLabel) => ({
-            tag: {
-              connectOrCreate: {
-                where: { label: tagLabel },
-                create: { label: tagLabel },
-              },
-            },
-          })),
-        };
-      }
-
-      return tx.algorithm.update({
-        where: { id },
-        data,
-        include: {
-          complexity: true,
-          displayCode: true,
-          forge: true,
-          tags: {
-            include: { tag: true },
-          },
-        },
-      });
-    });
-
-    return AlgorithmDetailSchema.parse({
-      id: updatedAlgorithm.id,
-      slug: updatedAlgorithm.slug,
-      name: updatedAlgorithm.name,
-      description: updatedAlgorithm.description,
-      difficulty: updatedAlgorithm.difficulty,
-      complexity: updatedAlgorithm.complexity
-        ? {
-            timeBest: updatedAlgorithm.complexity.timeBest,
-            timeAverage: updatedAlgorithm.complexity.timeAverage,
-            timeWorst: updatedAlgorithm.complexity.timeWorst,
-            space: updatedAlgorithm.complexity.space,
-          }
-        : null,
-      displayCode: updatedAlgorithm.displayCode
-        ? {
-            language: updatedAlgorithm.displayCode.language,
-            code: updatedAlgorithm.displayCode.code,
-          }
-        : null,
-      tags: updatedAlgorithm.tags.map((t) => t.tag),
-      forge: updatedAlgorithm.forge
-        ? {
-            forgeCode: updatedAlgorithm.forge.forgeCode,
-            inputSchema: updatedAlgorithm.forge.inputSchema,
-            guardRanges: updatedAlgorithm.forge.guardRanges,
-            version: updatedAlgorithm.forge.version,
-          }
-        : null,
-    });
-  }
-
-  async deleteAlgorithm(id: string): Promise<void> {
-    const existing = await prisma.algorithm.findUnique({ where: { id } });
-
-    if (!existing) {
-      throw AppError.notFound("Algorithm not found.");
-    }
-
-    await prisma.algorithm.delete({ where: { id } });
+/** Throws 400 if any forge sub-schema fails Zod validation. */
+function validateForge(forge: { forgeCode?: unknown; guardRanges?: unknown; inputSchema?: unknown }): void {
+  try {
+    if (forge.forgeCode   !== undefined) ForgeCodeSchema.parse(forge.forgeCode);
+    if (forge.guardRanges !== undefined) GuardRangesSchema.parse(forge.guardRanges);
+    if (forge.inputSchema !== undefined) InputSchema.parse(forge.inputSchema);
+  } catch (err) {
+    throw AppError.badRequest(
+      "Invalid forge configuration: " + (err instanceof Error ? err.message : "unknown"),
+    );
   }
 }
 
-export const algorithmService = new AlgorithmService();
+function toJsonValue(value: unknown): Prisma.InputJsonValue {
+  return value as Prisma.InputJsonValue;
+}
+
+function toCreateData(input: CreateAlgorithm) {
+  return {
+    slug:            input.slug,
+    name:            input.name,
+    description:     input.description,
+    categoryId:      input.categoryId,
+    difficulty:      input.difficulty as Difficulty,
+    isPublished:     input.isPublished ?? false,
+    timeBest:        input.complexity?.time?.best    ?? null,
+    timeAverage:     input.complexity?.time?.average ?? null,
+    timeWorst:       input.complexity?.time?.worst   ?? null,
+    spaceComplexity: input.complexity?.space         ?? null,
+    displayCodes:    input.displayCodes,
+    forge:           {
+      forgeCode:   toJsonValue(input.forge.forgeCode),
+      inputSchema: toJsonValue(input.forge.inputSchema),
+      guardRanges: toJsonValue(input.forge.guardRanges),
+    },
+    tags:            input.tags,
+  };
+}
+
+function toUpdateData(
+  input: UpdateAlgorithm,
+): Prisma.AlgorithmUpdateInput & {
+  displayCodes?: { language: string; code: string }[];
+  tags?:         string[];
+} {
+  return {
+    ...(input.slug        && { slug:        input.slug }),
+    ...(input.name        && { name:        input.name }),
+    ...(input.description && { description: input.description }),
+    ...(input.categoryId  && { categoryId:  input.categoryId }),
+    ...(input.difficulty  && { difficulty:  input.difficulty as Difficulty }),
+    ...(input.isPublished !== undefined && { isPublished: input.isPublished }),
+    ...(input.complexity  && {
+      timeBest:        input.complexity.time?.best    ?? null,
+      timeAverage:     input.complexity.time?.average ?? null,
+      timeWorst:       input.complexity.time?.worst   ?? null,
+      spaceComplexity: input.complexity.space         ?? null,
+    }),
+    ...(input.displayCodes && { displayCodes: input.displayCodes }),
+    ...(input.tags         && { tags:         input.tags }),
+    ...(input.forge        && {
+      forge: {
+        upsert: {
+          create: {
+            forgeCode:   toJsonValue(input.forge.forgeCode!),
+            inputSchema: toJsonValue(input.forge.inputSchema!),
+            guardRanges: toJsonValue(input.forge.guardRanges!),
+            version:     1,
+          },
+          update: {
+            ...(input.forge.forgeCode   && { forgeCode:   toJsonValue(input.forge.forgeCode) }),
+            ...(input.forge.inputSchema && { inputSchema: toJsonValue(input.forge.inputSchema) }),
+            ...(input.forge.guardRanges && { guardRanges: toJsonValue(input.forge.guardRanges) }),
+          },
+        },
+      },
+    }),
+  };
+}
+// npx prisma migrate dev --name your_change
+// npx prisma generate
+
+------------------------------------------------
+FILE: ./apps/api/src/services/algorithm/query.service.ts
+------------------------------------------------
+/**
+ * Lists and searches algorithms.
+ * Results are cached; the cache is busted on any mutation via mutation.service.ts.
+ */
+import { Prisma, Difficulty } from "@algoforge/db";
+import { AlgorithmListItemSchema, type AlgorithmListItem } from "@algoforge/forge";
+import { algorithmRepository } from "../../repositories/algorithm.repository";
+import { algorithmCacheKeys } from "./cache-keys";
+import { layeredCache } from "../lib/Layered.cache";
+import { AlgorithmQuery } from "../algorithm.service";
+
+export async function listAlgorithms(query: AlgorithmQuery): Promise<AlgorithmListItem[]> {
+  const key    = algorithmCacheKeys.list(query);
+  const cached = await layeredCache.get<AlgorithmListItem[]>(key);
+  if (cached) return cached;
+
+  const rows   = await algorithmRepository.findMany(buildWhere(query));
+  const result = rows.map((row) => AlgorithmListItemSchema.parse(row));
+
+  await layeredCache.set(key, result);
+  return result;
+}
+
+// ─── Private ──────────────────────────────────────────────────────────────────
+
+function buildWhere(query: AlgorithmQuery): Prisma.AlgorithmWhereInput {
+  return {
+    ...(query.categoryId                ? { categoryId:   query.categoryId }               : {}),
+    ...(query.difficulty                ? { difficulty:   query.difficulty as Difficulty } : {}),
+    ...(query.isPublished !== undefined ? { isPublished:  query.isPublished }              : {}),
+    ...(query.search ? {
+      OR: [
+        { name:        { contains: query.search, mode: Prisma.QueryMode.insensitive } },
+        { description: { contains: query.search, mode: Prisma.QueryMode.insensitive } },
+      ],
+    } : {}),
+  };
+}
+
+------------------------------------------------
+FILE: ./apps/api/src/services/algorithm/viz.service.ts
+------------------------------------------------
+/**
+ * Returns the forge / visualisation config for an algorithm.
+ * The forge config is the most frequently read object for the visualiser UI
+ * so it gets its own dedicated cache key.
+ */
+import { AlgorithmExecutionSchema, type AlgorithmExecution } from "@algoforge/forge";
+import { algorithmRepository } from "../../repositories/algorithm.repository";
+import { algorithmCacheKeys } from "./cache-keys";
+import { AppError } from "../../utils/app-error";
+import { layeredCache } from "../lib/Layered.cache";
+
+export async function getAlgorithmVisualization(id: string): Promise<AlgorithmExecution> {
+  const key    = algorithmCacheKeys.viz(id);
+  const cached = await layeredCache.get<AlgorithmExecution>(key);
+  if (cached) return cached;
+
+  const row = await algorithmRepository.findById(id);
+  if (!row)       throw AppError.notFound("Algorithm not found.");
+  if (!row.forge) throw AppError.notFound("No forge configuration found for this algorithm.");
+
+  const result = AlgorithmExecutionSchema.parse({
+    algorithmId: row.id,
+    name:        row.name,
+    forge: {
+      forgeCode:   row.forge.forgeCode,
+      inputSchema: row.forge.inputSchema,
+      guardRanges: row.forge.guardRanges,
+      version:     row.forge.version,
+    },
+  });
+
+  await layeredCache.set(key, result);
+  return result;
+}
+
+------------------------------------------------
+FILE: ./apps/api/src/services/algorithm.service.ts
+------------------------------------------------
+// Backward-compatible re-export.
+// Implementation has been split into services/algorithm/ sub-modules.
+// Any file that previously imported from this path continues to work.
+export { algorithmService } from "./algorithm/index";
+export type { AlgorithmQuery } from "../types/algorithm.types";
 
 ------------------------------------------------
 FILE: ./apps/api/src/services/analysis.service.ts
 ------------------------------------------------
-import {
-  AnalysisHistoryItemSchema,
-  AnalysisRecordSchema,
-  SharedAnalysisSchema,
-  type AnalysisHistoryResponse,
-  type CreateAnalysisInput,
-} from "@algoforge/analysis";
-import { prisma, Prisma } from "@algoforge/db";
-import { aiService } from "./ai.service";
-import {
-  decodeAnalysisCursor,
-  encodeAnalysisCursor,
-  type AnalysisHistoryQuery,
-} from "../validation/analysis";
-import { AppError } from "../utils/app-error";
+/**
+ * Analysis service.
+ *
+ * Cache strategy (two-layer LRU + Redis):
+ *   - AI result is cached by SHA-256 of (language + code) so identical
+ *     submissions never hit the AI provider twice.
+ *   - The DB record is always written — cache only shields the AI call.
+ */
+import { createHash, randomBytes } from "crypto";
 import { env } from "../config/env";
+import { analysisRepository } from "../repositories/analysis.repository";
+import { aiService } from "./ai.service";
+import { AppError } from "../utils/app-error";
+import { SharedAnalysisSchema } from "@algoforge/analysis";
+import { parseAnalysisHistoryQuery, type AnalysisInput, type AnalysisHistoryQuery } from "../validation/analysis";
+import { layeredCache } from "./lib/Layered.cache";
 
-function extractComplexityString(value: Prisma.JsonValue | null): string | null {
-  if (value === null || value === undefined) return null;
-  if (typeof value === "string") return value;
-  if (typeof value === "object" && !Array.isArray(value)) {
-    const obj = value as Record<string, unknown>;
-    const time = obj["time"];
-    if (time !== null && typeof time === "object" && !Array.isArray(time)) {
-      const worst = (time as Record<string, unknown>)["worst"];
-      if (typeof worst === "string") return worst;
-    }
-  }
-  return null;
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+function aiCacheKey(language: string, code: string): string {
+  const hash = createHash("sha256").update(`${language}:${code}`).digest("hex").slice(0, 32);
+  return `ai:analysis:${hash}`;
 }
 
-function serializeAnalysisRecord(analysis: {
-  id: string;
-  language: string;
-  result: Prisma.JsonValue;
-  createdAt: Date;
-}) {
-  return AnalysisRecordSchema.parse({
-    id: analysis.id,
-    language: analysis.language,
-    result: analysis.result,
-    createdAt: analysis.createdAt.toISOString(),
-  });
+function generateShareId(): string {
+  return randomBytes(9).toString("base64url");
 }
 
-function serializeHistoryItem(analysis: {
-  id: string;
-  language: string;
-  complexity: Prisma.JsonValue | null;
-  suggestion: string | null;
-  createdAt: Date;
-}) {
-  return AnalysisHistoryItemSchema.parse({
-    id: analysis.id,
-    language: analysis.language,
-    complexity: extractComplexityString(analysis.complexity),
-    suggestion: analysis.suggestion,
-    createdAt: analysis.createdAt.toISOString(),
-  });
-}
+// ─── Service ─────────────────────────────────────────────────────────────────
 
 class AnalysisService {
-  async createAnalysis(userId: string, input: CreateAnalysisInput) {
-    const analysisResult = await aiService.analyzeCode(input);
+  async createAnalysis(userId: string, input: AnalysisInput) {
+    const key = aiCacheKey(input.language, input.code);
 
-    const analysis = await prisma.analysis.create({
-      data: {
-        userId,
-        code: input.code,
+    // Try cache first — avoids calling the AI provider for duplicate code
+    let aiResult = await layeredCache.get<any>(key);
+
+    if (!aiResult) {
+      aiResult = await aiService.analyzeCode({
+        code:     input.code,
         language: input.language,
-        complexity: analysisResult.complexity.time.worst,
-        suggestion: analysisResult.improvements[0]?.suggestion ?? null,
-        result: analysisResult as unknown as Prisma.InputJsonValue,
-      },
-      select: {
-        id: true,
-        language: true,
-        result: true,
-        createdAt: true,
-      },
-    });
+      });
+      await layeredCache.set(key, aiResult);
+    }
 
-    return serializeAnalysisRecord(analysis);
+    return analysisRepository.create({
+      userId,
+      code:       input.code,
+      language:   input.language,
+      complexity: aiResult.complexity?.time?.average ?? null,
+      suggestion: aiResult.improvements?.[0]?.suggestion ?? null,
+      result:     aiResult as object,
+    });
   }
 
-  async listUserAnalyses(
-    userId: string,
-    query: AnalysisHistoryQuery,
-  ): Promise<AnalysisHistoryResponse> {
-    const cursor = query.cursor ? decodeAnalysisCursor(query.cursor) : null;
-    const take = query.limit + 1;
-
-    const analyses = await prisma.analysis.findMany({
-      where: {
-        userId,
-        ...(cursor
-          ? {
-              OR: [
-                { createdAt: { lt: new Date(cursor.createdAt) } },
-                {
-                  createdAt: { equals: new Date(cursor.createdAt) },
-                  id: { lt: cursor.id },
-                },
-              ],
-            }
-          : {}),
-      },
-      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
-      take,
-      select: {
-        id: true,
-        language: true,
-        complexity: true,
-        suggestion: true,
-        createdAt: true,
-      },
+  async listUserAnalyses(userId: string, query: AnalysisHistoryQuery) {
+    const rows = await analysisRepository.findManyByUser(userId, {
+      cursorCreatedAt: query.cursorCreatedAt,
+      cursorId:        query.cursorId,
+      take:            query.limit,
     });
-
-    const hasMore = analyses.length > query.limit;
-    const page = hasMore ? analyses.slice(0, query.limit) : analyses;
-    const lastItem = page.at(-1);
-
-    return {
-      data: page.map(serializeHistoryItem),
-      meta: {
-        nextCursor:
-          hasMore && lastItem
-            ? encodeAnalysisCursor({
-                createdAt: lastItem.createdAt.toISOString(),
-                id: lastItem.id,
-              })
-            : null,
-        hasMore,
-      },
-    };
+    return { analyses: rows };
   }
 
   async getUserAnalysisById(userId: string, analysisId: string) {
-    const analysis = await prisma.analysis.findFirst({
-      where: {
-        id: analysisId,
-        userId,
-      },
-      select: {
-        id: true,
-        language: true,
-        result: true,
-        createdAt: true,
-      },
-    });
-
-    if (!analysis) {
-      throw AppError.notFound("Analysis not found.");
-    }
-
-    return serializeAnalysisRecord(analysis);
+    const analysis = await analysisRepository.findOneByUser(userId, analysisId);
+    if (!analysis) throw AppError.notFound("Analysis not found.");
+    return analysis;
   }
 
   async shareAnalysis(userId: string, analysisId: string) {
-    const analysis = await prisma.analysis.findFirst({
-      where: {
-        id: analysisId,
-        userId,
-      },
-    });
+    const analysis = await analysisRepository.findForShare(analysisId, userId);
+    if (!analysis) throw AppError.notFound("Analysis not found.");
 
-    if (!analysis) {
-      throw AppError.notFound("Analysis not found.");
-    }
-
+    // Idempotent — return existing share URL if already public
     if (analysis.shareId && analysis.isPublic) {
-      return { shareUrl: `${env.webAppUrl}/share/${analysis.shareId}` };
+      return { shareUrl: `${env.webAppUrl}/share/analysis/${analysis.shareId}` };
     }
 
-    const { nanoid } = await import("nanoid");
-    const shareId = nanoid(10);
-
-    await prisma.analysis.update({
-      where: { id: analysisId },
-      data: {
-        shareId,
-        isPublic: true,
-      },
-    });
-
-    return { shareUrl: `${env.webAppUrl}/share/${shareId}` };
+    const shareId = generateShareId();
+    await analysisRepository.setPublic(analysisId, shareId);
+    return { shareUrl: `${env.webAppUrl}/share/analysis/${shareId}` };
   }
 
   async getPublicAnalysis(shareId: string) {
-    const analysis = await prisma.analysis.findUnique({
-      where: { shareId, isPublic: true },
-      select: {
-        id: true,
-        code: true,
-        language: true,
-        result: true,
-        createdAt: true,
-        isPublic: true,
-        user: {
-          select: {
-            id: true,
-            name: true,
-            username: true,
-            image: true,
-          },
-        },
-      },
-    });
-
-    if (!analysis) {
-      throw AppError.notFound("Analysis not found or not public.");
-    }
+    const analysis = await analysisRepository.findPublicByShareId(shareId);
+    if (!analysis) throw AppError.notFound("Analysis not found or not public.");
 
     return SharedAnalysisSchema.parse({
-      id: analysis.id,
-      code: analysis.code,
-      language: analysis.language,
-      result: analysis.result,
+      id:        analysis.id,
+      code:      analysis.code,
+      language:  analysis.language,
+      result:    analysis.result,
       createdAt: analysis.createdAt.toISOString(),
-      creator: analysis.user
+      creator:   analysis.user
         ? {
-            id: analysis.user.id,
-            name: analysis.user.name,
-            username: analysis.user.username ?? analysis.user.name,
+            id:        analysis.user.id,
+            name:      analysis.user.name,
+            username:  analysis.user.username ?? analysis.user.name,
             avatarUrl: analysis.user.image,
           }
         : undefined,
@@ -1730,9 +2857,14 @@ export const analysisService = new AnalysisService();
 ------------------------------------------------
 FILE: ./apps/api/src/services/auth.service.ts
 ------------------------------------------------
+//# filename: apps/api/src/services/auth.service.ts
+
 import { OAuth2Client } from "google-auth-library";
-import { Role, prisma } from "@algoforge/db";
+import { Role } from "@algoforge/db";
+import { prisma } from "@algoforge/db";
 import { env, googleOAuthConfig } from "../config/env";
+import { sessionRepository } from "../repositories/session.repository";
+import { userRepository } from "../repositories/user.repository";
 import { AppError } from "../utils/app-error";
 import { hashToken, randomToken, safeTokenEquals } from "../utils/crypto";
 import {
@@ -1761,24 +2893,13 @@ type SessionCookies = {
   csrfToken: string;
 };
 
-type AuthResult = SessionCookies & {
-  user: AuthenticatedUser;
-};
+type AuthResult = SessionCookies & { user: AuthenticatedUser };
 
 const googleClient = new OAuth2Client(
   env.googleClientId,
   env.googleClientSecret,
   googleOAuthConfig.redirectUri,
 );
-
-const userSelect = {
-  id: true,
-  email: true,
-  username: true,
-  name: true,
-  image: true,
-  role: true,
-} as const;
 
 class AuthService {
   buildGoogleAuthorizationUrl(): { url: string; state: string } {
@@ -1790,7 +2911,6 @@ class AuthService {
       state,
       prompt: "select_account",
     });
-
     return { url, state };
   }
 
@@ -1800,20 +2920,14 @@ class AuthService {
   ): Promise<AuthResult> {
     const { tokens } = await googleClient.getToken(code);
     const idToken = tokens.id_token;
-
-    if (!idToken) {
-      throw AppError.unauthorized("Google did not return an ID token.");
-    }
+    if (!idToken) throw AppError.unauthorized("Google did not return an ID token.");
 
     const ticket = await googleClient.verifyIdToken({
       idToken,
       audience: env.googleClientId,
     });
     const payload = ticket.getPayload();
-
-    if (!payload?.sub) {
-      throw AppError.unauthorized("Google account data is invalid.");
-    }
+    if (!payload?.sub) throw AppError.unauthorized("Google account data is invalid.");
 
     const user = await this.findOrCreateOAuthUser({
       provider: "google",
@@ -1829,32 +2943,16 @@ class AuthService {
   async authenticateAccessToken(accessToken: string) {
     const payload = verifyAccessToken(accessToken);
 
-    const session = await prisma.session.findFirst({
-      where: {
-        id: payload.sessionId,
-        userId: payload.sub,
-        revokedAt: null,
-        expiresAt: { gt: new Date() },
-      },
-      select: {
-        id: true,
-        expiresAt: true,
-        user: {
-          select: userSelect,
-        },
-      },
-    });
+    const session = await sessionRepository.findActiveById(
+      payload.sessionId,
+      payload.sub,
+    );
 
-    if (!session) {
-      throw AppError.unauthorized("Session is invalid.");
-    }
+    if (!session) throw AppError.unauthorized("Session is invalid.");
 
     return {
       user: session.user,
-      session: {
-        id: session.id,
-        expiresAt: session.expiresAt,
-      },
+      session: { id: session.id, expiresAt: session.expiresAt },
     };
   }
 
@@ -1863,20 +2961,15 @@ class AuthService {
     metadata: RequestMetadata,
   ): Promise<AuthResult> {
     const payload = verifyRefreshToken(refreshToken);
-    const presentedTokenHash = hashToken(refreshToken);
+    const presentedHash = hashToken(refreshToken);
 
-    const session = await prisma.session.findUnique({
-      where: { id: payload.sessionId },
-      include: {
-        user: { select: userSelect },
-      },
-    });
+    const session = await sessionRepository.findByIdWithUser(payload.sessionId);
 
     if (!session || session.userId !== payload.sub) {
       throw AppError.unauthorized("Refresh session is invalid.");
     }
 
-    if (!safeTokenEquals(presentedTokenHash, session.tokenHash)) {
+    if (!safeTokenEquals(presentedHash, session.tokenHash)) {
       throw AppError.unauthorized("Refresh token is invalid.");
     }
 
@@ -1886,76 +2979,44 @@ class AuthService {
     }
 
     if (session.expiresAt <= new Date()) {
-      await this.revokeSession(session.id);
+      await sessionRepository.revokeById(session.id);
       throw AppError.unauthorized("Refresh token expired.");
     }
 
-    const rotatedSession = await prisma
-      .$transaction(async (tx) => {
-        const now = new Date();
-        const revocation = await tx.session.updateMany({
-          where: {
-            id: session.id,
-            userId: session.userId,
-            tokenHash: presentedTokenHash,
-            revokedAt: null,
-            expiresAt: { gt: now },
-          },
-          data: {
-            revokedAt: now,
-            lastUsedAt: now,
-            ipAddress: metadata.ipAddress,
-            userAgent: metadata.userAgent,
-          },
-        });
+    const nextRefreshToken = signRefreshToken({
+      sub: session.user.id,
+      sessionId: randomToken(24),
+    });
+    const nextSessionId = verifyRefreshToken(nextRefreshToken).sessionId;
 
-        if (revocation.count !== 1) {
-          throw AppError.unauthorized("Refresh token reuse detected.");
-        }
+    const rotated = await sessionRepository.rotate(
+      session.id,
+      session.userId,
+      presentedHash,
+      {
+        id: nextSessionId,
+        tokenHash: hashToken(nextRefreshToken),
+        expiresAt: this.buildRefreshExpiry(),
+        lastUsedAt: new Date(),
+        ipAddress: metadata.ipAddress,
+        userAgent: metadata.userAgent,
+      },
+    );
 
-        const nextRefreshToken = signRefreshToken({
-          sub: session.user.id,
-          sessionId: randomToken(24),
-        });
-
-        const nextSessionId = verifyRefreshToken(nextRefreshToken).sessionId;
-        const nextSession = await tx.session.create({
-          data: {
-            id: nextSessionId,
-            userId: session.user.id,
-            tokenHash: hashToken(nextRefreshToken),
-            expiresAt: this.buildRefreshExpiry(),
-            lastUsedAt: now,
-            ipAddress: metadata.ipAddress,
-            userAgent: metadata.userAgent,
-            rotatedFromId: session.id,
-          },
-        });
-
-        return {
-          session: nextSession,
-          refreshToken: nextRefreshToken,
-        };
-      })
-      .catch(async (error) => {
-        if (
-          error instanceof AppError &&
-          error.message === "Refresh token reuse detected."
-        ) {
-          await this.revokeAllUserSessions(session.userId);
-        }
-        throw error;
-      });
+    if (!rotated) {
+      await this.revokeAllUserSessions(session.userId);
+      throw AppError.unauthorized("Refresh token reuse detected.");
+    }
 
     const accessToken = signAccessToken({
       sub: session.user.id,
-      sessionId: rotatedSession.session.id,
+      sessionId: nextSessionId,
       role: session.user.role,
     });
 
     return {
       accessToken,
-      refreshToken: rotatedSession.refreshToken,
+      refreshToken: nextRefreshToken,
       csrfToken: randomToken(24),
       user: session.user,
     };
@@ -1964,22 +3025,14 @@ class AuthService {
   async revokeSessionByRefreshToken(refreshToken: string): Promise<void> {
     try {
       const payload = verifyRefreshToken(refreshToken);
-      await this.revokeSession(payload.sessionId, payload.sub);
+      await sessionRepository.revokeById(payload.sessionId, payload.sub);
     } catch {
       return;
     }
   }
 
   async revokeAllUserSessions(userId: string): Promise<void> {
-    await prisma.session.updateMany({
-      where: {
-        userId,
-        revokedAt: null,
-      },
-      data: {
-        revokedAt: new Date(),
-      },
-    });
+    await sessionRepository.revokeAllForUser(userId);
   }
 
   private async createSessionForUser(
@@ -1992,16 +3045,14 @@ class AuthService {
     });
     const refreshPayload = verifyRefreshToken(refreshToken);
 
-    await prisma.session.create({
-      data: {
-        id: refreshPayload.sessionId,
-        userId: user.id,
-        tokenHash: hashToken(refreshToken),
-        expiresAt: this.buildRefreshExpiry(),
-        lastUsedAt: new Date(),
-        ipAddress: metadata.ipAddress,
-        userAgent: metadata.userAgent,
-      },
+    await sessionRepository.create({
+      id: refreshPayload.sessionId,
+      userId: user.id,
+      tokenHash: hashToken(refreshToken),
+      expiresAt: this.buildRefreshExpiry(),
+      lastUsedAt: new Date(),
+      ipAddress: metadata.ipAddress,
+      userAgent: metadata.userAgent,
     });
 
     const accessToken = signAccessToken({
@@ -2010,34 +3061,13 @@ class AuthService {
       role: user.role,
     });
 
-    return {
-      accessToken,
-      refreshToken,
-      csrfToken: randomToken(24),
-      user,
-    };
+    return { accessToken, refreshToken, csrfToken: randomToken(24), user };
   }
 
   private buildRefreshExpiry(): Date {
-    const expiresAt = new Date();
-    expiresAt.setDate(expiresAt.getDate() + env.refreshTokenTtlDays);
-    return expiresAt;
-  }
-
-  private async revokeSession(
-    sessionId: string,
-    userId?: string,
-  ): Promise<void> {
-    await prisma.session.updateMany({
-      where: {
-        id: sessionId,
-        ...(userId ? { userId } : {}),
-        revokedAt: null,
-      },
-      data: {
-        revokedAt: new Date(),
-      },
-    });
+    const d = new Date();
+    d.setDate(d.getDate() + env.refreshTokenTtlDays);
+    return d;
   }
 
   private async findOrCreateOAuthUser(input: {
@@ -2057,7 +3087,14 @@ class AuthService {
         },
         include: {
           user: {
-            select: userSelect,
+            select: {
+              id: true,
+              email: true,
+              username: true,
+              name: true,
+              image: true,
+              role: true,
+            },
           },
         },
       });
@@ -2070,7 +3107,14 @@ class AuthService {
             name: input.name,
             image: input.image,
           },
-          select: userSelect,
+          select: {
+            id: true,
+            email: true,
+            username: true,
+            name: true,
+            image: true,
+            role: true,
+          },
         });
       }
 
@@ -2078,7 +3122,14 @@ class AuthService {
         input.email !== null
           ? await tx.user.findUnique({
               where: { email: input.email },
-              select: userSelect,
+              select: {
+                id: true,
+                email: true,
+                username: true,
+                name: true,
+                image: true,
+                role: true,
+              },
             })
           : null;
 
@@ -2091,7 +3142,14 @@ class AuthService {
             name: input.name,
             image: input.image,
           },
-          select: userSelect,
+          select: {
+            id: true,
+            email: true,
+            username: true,
+            name: true,
+            image: true,
+            role: true,
+          },
         }));
 
       await tx.account.create({
@@ -2105,11 +3163,15 @@ class AuthService {
       if (existingUser) {
         return tx.user.update({
           where: { id: existingUser.id },
-          data: {
-            name: input.name,
-            image: input.image,
+          data: { name: input.name, image: input.image },
+          select: {
+            id: true,
+            email: true,
+            username: true,
+            name: true,
+            image: true,
+            role: true,
           },
-          select: userSelect,
         });
       }
 
@@ -2121,99 +3183,495 @@ class AuthService {
 export const authService = new AuthService();
 
 ------------------------------------------------
+FILE: ./apps/api/src/services/cache.service.ts
+------------------------------------------------
+/**
+ * Backward-compatible cache wrapper used by analysis and explanation services.
+ * Internally delegates to the layered (LRU + Redis) cache.
+ * Keys are SHA-256 hashed so arbitrarily long inputs (e.g. source code) stay
+ * within Redis key-length limits.
+ */
+import { createHash } from "crypto";
+import { layeredCache } from "./lib/Layered.cache";
+import { env } from "../config/env";
+
+export type CacheNamespace = "ai" | "viz" | "algo";
+
+function buildKey(namespace: CacheNamespace, raw: string): string {
+  const hashed = createHash("sha256").update(raw).digest("hex").slice(0, 32);
+  return `${namespace}:${hashed}`;
+}
+
+export const cacheService = {
+  async get<T>(namespace: CacheNamespace, input: string): Promise<T | null> {
+    return layeredCache.get<T>(buildKey(namespace, input));
+  },
+
+  async set(
+    namespace: CacheNamespace,
+    input: string,
+    value: unknown,
+    ttlSeconds = env.redis.ttlSeconds,
+  ): Promise<void> {
+    await layeredCache.set(buildKey(namespace, input), value, ttlSeconds);
+  },
+
+  async del(namespace: CacheNamespace, input: string): Promise<void> {
+    await layeredCache.del(buildKey(namespace, input));
+  },
+};
+
+------------------------------------------------
 FILE: ./apps/api/src/services/category.service.ts
 ------------------------------------------------
-import { prisma } from "@algoforge/db";
-import {
-    CategoryResponseSchema,
-    type CreateCategory,
-    type UpdateCategory,
-    type CategoryResponse,
-} from "@algoforge/forge";
-import { AppError } from "../utils/app-error";
-import { randomUUID } from "crypto";
+//# filename: apps/api/src/services/category.service.ts
 
-function serializeCategory(category: {
-    id: string;
-    label: string;
-    description: string | null;
-    iconName: string | null;
-    sortOrder: number;
-    createdAt: Date;
-    updatedAt: Date;
+import { randomUUID } from "crypto";
+import {
+  CategoryResponseSchema,
+  type CreateCategory,
+  type UpdateCategory,
+  type CategoryResponse,
+} from "@algoforge/forge";
+import { categoryRepository } from "../repositories/category.repository";
+import { AppError } from "../utils/app-error";
+
+function serialize(category: {
+  id: string;
+  label: string;
+  description: string | null;
+  iconName: string | null;
+  sortOrder: number;
+  createdAt: Date;
+  updatedAt: Date;
 }): CategoryResponse {
-    return CategoryResponseSchema.parse({
-        id: category.id,
-        label: category.label,
-        description: category.description,
-        iconName: category.iconName,
-        sortOrder: category.sortOrder,
-        createdAt: category.createdAt.toISOString(),
-        updatedAt: category.updatedAt.toISOString(),
-    });
+  return CategoryResponseSchema.parse({
+    id: category.id,
+    label: category.label,
+    description: category.description,
+    iconName: category.iconName,
+    sortOrder: category.sortOrder,
+    createdAt: category.createdAt.toISOString(),
+    updatedAt: category.updatedAt.toISOString(),
+  });
 }
 
 class CategoryService {
-    async listCategories(): Promise<CategoryResponse[]> {
-        const categories = await prisma.category.findMany({
-            orderBy: { sortOrder: "asc" },
-        });
-        return categories.map(serializeCategory);
+  async listCategories(): Promise<CategoryResponse[]> {
+    const rows = await categoryRepository.findAll();
+    return rows.map(serialize);
+  }
+
+  async getCategoryById(id: string): Promise<CategoryResponse> {
+    const row = await categoryRepository.findById(id);
+    if (!row) throw AppError.notFound("Category not found.");
+    return serialize(row);
+  }
+
+  async createCategory(input: CreateCategory): Promise<CategoryResponse> {
+    const row = await categoryRepository.create({
+      id: input.id ?? randomUUID(),
+      label: input.label,
+      description: input.description,
+      iconName: input.iconName,
+      sortOrder: input.sortOrder,
+    });
+    return serialize(row);
+  }
+
+  async updateCategory(id: string, input: UpdateCategory): Promise<CategoryResponse> {
+    const row = await categoryRepository.update(id, {
+      label: input.label,
+      description: input.description,
+      iconName: input.iconName,
+      sortOrder: input.sortOrder,
+    });
+    return serialize(row);
+  }
+
+  async deleteCategory(id: string): Promise<void> {
+    const count = await categoryRepository.countAlgorithmsInCategory(id);
+    if (count > 0) {
+      throw AppError.badRequest(
+        "Cannot delete category with associated algorithms.",
+      );
     }
-
-    async getCategoryById(id: string): Promise<CategoryResponse> {
-        const category = await prisma.category.findUnique({
-            where: { id },
-        });
-
-        if (!category) {
-            throw AppError.notFound("Category not found.");
-        }
-
-        return serializeCategory(category);
-    }
-
-    async createCategory(input: CreateCategory): Promise<CategoryResponse> {
-        const category = await prisma.category.create({
-            data: {
-                ...input,
-                id: input.id ?? randomUUID(), // ✅ generate if missing
-            },
-        });
-
-        return serializeCategory(category);
-    }
-
-    async updateCategory(
-        id: string,
-        input: UpdateCategory,
-    ): Promise<CategoryResponse> {
-        const category = await prisma.category.update({
-            where: { id },
-            data: input,
-        });
-        return serializeCategory(category);
-    }
-
-    async deleteCategory(id: string): Promise<void> {
-        const count = await prisma.algorithm.count({
-            where: { categoryId: id },
-        });
-
-        if (count > 0) {
-            throw AppError.badRequest(
-                "Cannot delete category with associated algorithms.",
-            );
-        }
-
-        await prisma.category.delete({
-            where: { id },
-        });
-    }
+    await categoryRepository.delete(id);
+  }
 }
 
 export const categoryService = new CategoryService();
 
+------------------------------------------------
+FILE: ./apps/api/src/services/explanation-session.service.ts
+------------------------------------------------
+/**
+ * Persistent AI explanation chat sessions.
+ *
+ * Flow for sendMessage:
+ *   1. Load session from DB (or throw 404)
+ *   2. Append user message to in-memory list
+ *   3. Run AI pipeline (same as one-shot explain)
+ *   4. Append assistant message
+ *   5. Persist both to DB and bust session cache
+ *
+ * Sessions are shareable — makeSessionPublic generates a short shareId and
+ * flips isPublic so anonymous readers can fetch via GET /api/share/explain/:shareId.
+ *
+ * Cache: each session is cached for 5 min (LRU + Redis).
+ * The cache is busted on every write (sendMessage, share, delete).
+ */
+import { randomBytes } from "crypto";
+import { explanationSessionRepository } from "../repositories/explanation-session.repository";
+import { processQuery } from "../ai/query-processor";
+import { buildCodebaseContext, serializeContext } from "../ai/context-builder";
+import { buildExplanationPrompt } from "../prompts/explanation.prompt";
+import { aiService } from "./ai.service";
+import { AppError } from "../utils/app-error";
+import { env } from "../config/env";
+import type {
+  CreateSessionInput,
+  SendMessageInput,
+  ListSessionsQuery,
+} from "../validation/explanation-session";
+import { layeredCache } from "./lib/Layered.cache";
+
+// ─── Public types ─────────────────────────────────────────────────────────────
+
+export type SessionMessage = {
+  id:        string;   // 6-byte hex short id
+  role:      "user" | "assistant";
+  content:   string;
+  intent?:   string;   // AI-detected intent, populated on assistant messages only
+  createdAt: string;   // ISO 8601
+};
+
+// ─── Constants ────────────────────────────────────────────────────────────────
+
+const SESSION_CACHE_TTL_SECONDS = 300; // 5 minutes
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+function sessionCacheKey(id: string): string {
+  return `explain:session:${id}`;
+}
+
+function newMessageId(): string {
+  return randomBytes(6).toString("hex");
+}
+
+function newShareId(): string {
+  return randomBytes(9).toString("base64url");
+}
+
+function buildShareUrl(shareId: string): string {
+  return `${env.webAppUrl}/share/explain/${shareId}`;
+}
+
+// ─── Service ─────────────────────────────────────────────────────────────────
+
+class ExplanationSessionService {
+  // ─── Create ────────────────────────────────────────────────────────────────
+
+  async createSession(userId: string, input: CreateSessionInput) {
+    return explanationSessionRepository.create(userId, input.title);
+  }
+
+  // ─── List ──────────────────────────────────────────────────────────────────
+
+  async listSessions(userId: string, query: ListSessionsQuery) {
+    const sessions = await explanationSessionRepository.findManyByUser(userId, {
+      take:   query.limit,
+      cursor: query.cursor,
+    });
+
+    // Return the last id as the next cursor so the client can paginate
+    const nextCursor = sessions.length === query.limit
+      ? (sessions[sessions.length - 1]?.id ?? null)
+      : null;
+
+    return { sessions, nextCursor };
+  }
+
+  // ─── Get by id (owner only) ────────────────────────────────────────────────
+
+  async getSession(userId: string, id: string) {
+    const cached = await layeredCache.get<
+      Awaited<ReturnType<typeof explanationSessionRepository.findOneByUser>>
+    >(sessionCacheKey(id));
+
+    if (cached) return cached;
+
+    const session = await explanationSessionRepository.findOneByUser(id, userId);
+    if (!session) throw AppError.notFound("Session not found.");
+
+    await layeredCache.set(sessionCacheKey(id), session, SESSION_CACHE_TTL_SECONDS);
+    return session;
+  }
+
+  // ─── Send message ──────────────────────────────────────────────────────────
+
+  async sendMessage(userId: string, sessionId: string, input: SendMessageInput) {
+    // Always load from DB for writes to avoid stale-cache races
+    const session = await explanationSessionRepository.findOneByUser(sessionId, userId);
+    if (!session) throw AppError.notFound("Session not found.");
+
+    const existingMessages = (session.messages as unknown as SessionMessage[]) ?? [];
+
+    // 1. Build user message
+    const userMessage: SessionMessage = {
+      id:        newMessageId(),
+      role:      "user",
+      content:   input.query,
+      createdAt: new Date().toISOString(),
+    };
+
+    // 2. Run AI pipeline — same steps as the one-shot endpoint
+    const scope       = processQuery(input.query);
+    const context     = await buildCodebaseContext(scope.targetSlugs);
+    const contextText = serializeContext(context);
+    const prompt      = buildExplanationPrompt(contextText, scope);
+    const rawAnswer   = await aiService.generateText([{ role: "user", content: prompt }]);
+
+    // 3. Build assistant message
+    const assistantMessage: SessionMessage = {
+      id:        newMessageId(),
+      role:      "assistant",
+      content:   rawAnswer.trim(),
+      intent:    scope.intent,
+      createdAt: new Date().toISOString(),
+    };
+
+    // 4. Persist; auto-set title from the first user query if not already set
+    const updatedMessages = [...existingMessages, userMessage, assistantMessage];
+    const title           = session.title ?? input.query.slice(0, 80);
+    await explanationSessionRepository.appendMessages(sessionId, updatedMessages, title);
+
+    // 5. Bust cache so the next getSession call reflects the new messages
+    await layeredCache.del(sessionCacheKey(sessionId));
+
+    return { userMessage, assistantMessage };
+  }
+
+  // ─── Delete ────────────────────────────────────────────────────────────────
+
+  async deleteSession(userId: string, id: string): Promise<void> {
+    const result = await explanationSessionRepository.delete(id, userId);
+    if (result.count === 0) throw AppError.notFound("Session not found.");
+    await layeredCache.del(sessionCacheKey(id));
+  }
+
+  // ─── Share (make public) ───────────────────────────────────────────────────
+
+  async shareSession(userId: string, id: string) {
+    const session = await explanationSessionRepository.findOneByUser(id, userId);
+    if (!session) throw AppError.notFound("Session not found.");
+
+    // Idempotent — return existing URL if already shared
+    if (session.shareId && session.isPublic) {
+      return { shareUrl: buildShareUrl(session.shareId) };
+    }
+
+    const shareId = newShareId();
+    await explanationSessionRepository.share(id, shareId);
+    await layeredCache.del(sessionCacheKey(id));
+
+    return { shareUrl: buildShareUrl(shareId) };
+  }
+
+  // ─── Public read (no auth required) ───────────────────────────────────────
+
+  async getPublicSession(shareId: string) {
+    const cacheKey = `explain:public:${shareId}`;
+
+    const cached = await layeredCache.get<
+      Awaited<ReturnType<typeof explanationSessionRepository.findPublicByShareId>>
+    >(cacheKey);
+    if (cached) return cached;
+
+    const session = await explanationSessionRepository.findPublicByShareId(shareId);
+    if (!session) throw AppError.notFound("Session not found or not public.");
+
+    // Public sessions can be cached longer — they don't change often
+    await layeredCache.set(cacheKey, session, SESSION_CACHE_TTL_SECONDS * 2);
+    return session;
+  }
+}
+
+export const explanationSessionService = new ExplanationSessionService();
+
+------------------------------------------------
+FILE: ./apps/api/src/services/explanation.service.ts
+------------------------------------------------
+/**
+ * One-shot explanation endpoint (stateless).
+ * For persistent chat sessions use ExplanationSessionService.
+ */
+import { aiService } from "./ai.service";
+import { buildCodebaseContext, serializeContext } from "../ai/context-builder";
+import { processQuery, type QueryScope } from "../ai/query-processor";
+import { buildExplanationPrompt } from "../prompts/explanation.prompt";
+import { formatExplanationResponse, type ExplanationResponse } from "../ai/response-formatter";
+import { AppError } from "../utils/app-error";
+import { layeredCache } from "./lib/Layered.cache";
+
+const EXPLAIN_CACHE_PREFIX = "ai:explain:";
+
+class ExplanationService {
+  async explain(query: string): Promise<ExplanationResponse> {
+    if (query.trim().length < 5) {
+      throw AppError.badRequest("Query must be at least 5 characters.");
+    }
+
+    const cacheKey = EXPLAIN_CACHE_PREFIX + query.trim().toLowerCase();
+
+    // Check layered cache (L1 LRU → L2 Redis)
+    const cached = await layeredCache.get<ExplanationResponse>(cacheKey);
+    if (cached) {
+      return { ...cached, cachedAt: new Date().toISOString() };
+    }
+
+    // Full AI pipeline
+    const scope       = processQuery(query);
+    const context     = await buildCodebaseContext(scope.targetSlugs);
+    const contextText = serializeContext(context);
+    const prompt      = buildExplanationPrompt(contextText, scope);
+    const raw         = await aiService.generateText([{ role: "user", content: prompt }]);
+
+    const result = formatExplanationResponse(raw, scope, scope.targetRoutes);
+    await layeredCache.set(cacheKey, result);
+
+    return result;
+  }
+}
+
+export const explanationService = new ExplanationService();
+
+------------------------------------------------
+FILE: ./apps/api/src/services/lib/index.ts
+------------------------------------------------
+export { layeredCache as cache } from "./Layered.cache";
+
+------------------------------------------------
+FILE: ./apps/api/src/services/lib/Layered.cache.ts
+------------------------------------------------
+/**
+ * Layered cache — L1 (LRU) + L2 (Redis).
+ *
+ * Read path:
+ *   1. Check LRU — return immediately on hit (no network).
+ *   2. Check Redis — warm LRU on hit, then return.
+ *   3. Return null (caller fetches from source of truth).
+ *
+ * Write path: write to both layers atomically (LRU first, then Redis).
+ * Delete path: evict from both layers.
+ */
+import { lruCache } from "./lru.cache";
+import { redisCache } from "./redis.cache";
+import { env } from "../../config/env";
+
+const DEFAULT_TTL_SECONDS = env.redis.ttlSeconds;
+
+export const layeredCache = {
+  async get<T>(key: string): Promise<T | null> {
+    // L1 hit
+    const l1 = lruCache.get(key);
+    if (l1 !== null) return JSON.parse(l1) as T;
+
+    // L2 hit — also warms L1 for the next request on this instance
+    const l2 = await redisCache.get(key);
+    if (l2 !== null) {
+      lruCache.set(key, l2, DEFAULT_TTL_SECONDS * 1000);
+      return JSON.parse(l2) as T;
+    }
+
+    return null;
+  },
+
+  async set(key: string, value: unknown, ttlSeconds = DEFAULT_TTL_SECONDS): Promise<void> {
+    const serialised = JSON.stringify(value);
+    lruCache.set(key, serialised, ttlSeconds * 1000);
+    await redisCache.set(key, serialised, ttlSeconds);
+  },
+
+  async del(key: string): Promise<void> {
+    lruCache.del(key);
+    await redisCache.del(key);
+  },
+};
+
+------------------------------------------------
+FILE: ./apps/api/src/services/lib/lru.cache.ts
+------------------------------------------------
+/**
+ * L1 — In-process LRU cache.
+ *
+ * Fast, zero-latency reads. Bounded to 1 000 entries so it never grows
+ * unboundedly. Each entry carries its own TTL (set at write time).
+ * When the cache is full the least-recently-used entry is evicted first.
+ */
+import { LRUCache } from "lru-cache";
+import { env } from "../../config/env";
+
+const DEFAULT_TTL_MS = env.redis.ttlSeconds * 1000;
+
+// Store serialised JSON strings to keep the in-memory footprint predictable
+const store = new LRUCache<string, string>({
+  max: 1_000,
+  ttl: DEFAULT_TTL_MS,
+  allowStale: false,
+});
+
+export const lruCache = {
+  get(key: string): string | null {
+    return store.get(key) ?? null;
+  },
+
+  set(key: string, value: string, ttlMs = DEFAULT_TTL_MS): void {
+    store.set(key, value, { ttl: ttlMs });
+  },
+
+  del(key: string): void {
+    store.delete(key);
+  },
+};
+
+------------------------------------------------
+FILE: ./apps/api/src/services/lib/redis.cache.ts
+------------------------------------------------
+/**
+ * L2 — Redis cache.
+ *
+ * Shared across all API instances and survives process restarts.
+ * All errors are swallowed so a Redis outage never breaks a request.
+ */
+import { getRedisClient } from "../../config/redis";
+
+export const redisCache = {
+  async get(key: string): Promise<string | null> {
+    try {
+      return await getRedisClient().get(key);
+    } catch {
+      return null; // Redis down → treat as miss
+    }
+  },
+
+  async set(key: string, value: string, ttlSeconds: number): Promise<void> {
+    try {
+      await getRedisClient().set(key, value, "EX", ttlSeconds);
+    } catch {
+      // Non-fatal: the request still succeeds without caching
+    }
+  },
+
+  async del(key: string): Promise<void> {
+    try {
+      await getRedisClient().del(key);
+    } catch {
+      // Non-fatal
+    }
+  },
+};
 
 ------------------------------------------------
 FILE: ./apps/api/src/services/providers/ai-provider.ts
@@ -2228,6 +3686,7 @@ export type AIMessage = {
 
 export type AIGenerateRequest = {
   messages: AIMessage[];
+  responseFormat?: "json" | "text";
 };
 
 export type AIGenerateResponse = {
@@ -2266,32 +3725,29 @@ export class GeminiProvider implements AIProvider {
     if (!config.apiKey) {
       throw AppError.internal("Missing Gemini API key.");
     }
-
     this.client = new GoogleGenAI({ apiKey: config.apiKey });
   }
 
   async generate(request: AIGenerateRequest): Promise<AIGenerateResponse> {
     try {
-      const prompt = request.messages.map((message) => message.content).join("\n\n");
+      const prompt = request.messages.map((m) => m.content).join("\n\n");
+      const isJson = request.responseFormat === "json";
+
       const response = await this.client.models.generateContent({
         model: this.config.model,
         contents: prompt,
         config: {
-          responseMimeType: "application/json",
-          temperature: 0.1,
+          ...(isJson ? { responseMimeType: "application/json" } : {}),
+          temperature: isJson ? 0.1 : 0.4,
         },
       });
 
       const text = response.text?.trim();
-
       if (!text) {
         throw AppError.badGateway("Empty response from Gemini provider.");
       }
 
-      const message = {
-        role: "assistant" as const,
-        content: text,
-      };
+      const message = { role: "assistant" as const, content: text };
 
       return {
         model: this.config.model,
@@ -2299,14 +3755,10 @@ export class GeminiProvider implements AIProvider {
         history: [...request.messages, message],
       };
     } catch (error) {
-      if (error instanceof AppError) {
-        throw error;
-      }
-
+      if (error instanceof AppError) throw error;
       if (!env.isProduction) {
         console.error("[AI][gemini]", error);
       }
-
       throw AppError.badGateway("Gemini provider request failed.");
     }
   }
@@ -2337,17 +3789,13 @@ type OpenRouterChoiceMessage = {
 };
 
 type OpenRouterCompletionResponse = {
-  choices?: Array<{
-    message?: OpenRouterChoiceMessage;
-  }>;
+  choices?: Array<{ message?: OpenRouterChoiceMessage }>;
 };
 
 type OpenRouterChatRequest = {
   model: string;
   messages: OpenRouterMessage[];
-  reasoning: {
-    enabled: boolean;
-  };
+  reasoning: { enabled: boolean };
 };
 
 export class OpenRouterProvider implements AIProvider {
@@ -2369,7 +3817,6 @@ export class OpenRouterProvider implements AIProvider {
     if (!config.apiKeys.length) {
       throw AppError.internal("Missing OpenRouter API keys.");
     }
-
     if (!config.freeModels.length) {
       throw AppError.internal("Missing OpenRouter free models.");
     }
@@ -2382,19 +3829,11 @@ export class OpenRouterProvider implements AIProvider {
 
     let lastRetriableError: unknown;
 
-    for (
-      let modelAttempt = 0;
-      modelAttempt < this.config.freeModels.length;
-      modelAttempt++
-    ) {
-      const modelState = this.getModelState(modelAttempt);
+    for (let modelOffset = 0; modelOffset < this.config.freeModels.length; modelOffset++) {
+      const modelState = this.getModelState(modelOffset);
 
-      for (
-        let keyAttempt = 0;
-        keyAttempt < this.config.apiKeys.length;
-        keyAttempt++
-      ) {
-        const keyState = this.getKeyState(modelState.model, keyAttempt);
+      for (let keyOffset = 0; keyOffset < this.config.apiKeys.length; keyOffset++) {
+        const keyState = this.getKeyState(modelState.model, keyOffset);
 
         try {
           const client = this.getClient(keyState.apiKey);
@@ -2428,10 +3867,9 @@ export class OpenRouterProvider implements AIProvider {
               modelState.model,
               (keyState.actualIndex + 1) % this.config.apiKeys.length,
             );
-
             if (!env.isProduction) {
               console.warn(
-                `[AI][openrouter] Key ${keyState.actualIndex} failed for model "${modelState.model}" (Status: ${statusCode}). Trying next key...`,
+                `[AI][openrouter] Key ${keyState.actualIndex} throttled for model "${modelState.model}". Rotating.`,
               );
             }
             continue;
@@ -2442,37 +3880,23 @@ export class OpenRouterProvider implements AIProvider {
       }
 
       if (!env.isProduction) {
-        console.warn(
-          `[AI][openrouter] All keys exhausted for model "${modelState.model}". Rotating to next available model.`,
-        );
+        console.warn(`[AI][openrouter] All keys exhausted for model "${modelState.model}". Rotating model.`);
       }
-
-      this.modelIndex =
-        (modelState.actualIndex + 1) % this.config.freeModels.length;
+      this.modelIndex = (modelState.actualIndex + 1) % this.config.freeModels.length;
     }
 
     throw this.normalizeRetriableError(lastRetriableError);
   }
 
   private getModelState(offset: number): { actualIndex: number; model: string } {
-    const actualIndex =
-      (this.modelIndex + offset) % this.config.freeModels.length;
-    return {
-      actualIndex,
-      model: this.config.freeModels[actualIndex],
-    };
+    const actualIndex = (this.modelIndex + offset) % this.config.freeModels.length;
+    return { actualIndex, model: this.config.freeModels[actualIndex] };
   }
 
-  private getKeyState(
-    model: string,
-    offset: number,
-  ): { actualIndex: number; apiKey: string } {
+  private getKeyState(model: string, offset: number): { actualIndex: number; apiKey: string } {
     const startIndex = this.keyIndexByModel.get(model) ?? 0;
     const actualIndex = (startIndex + offset) % this.config.apiKeys.length;
-    return {
-      actualIndex,
-      apiKey: this.config.apiKeys[actualIndex],
-    };
+    return { actualIndex, apiKey: this.config.apiKeys[actualIndex] };
   }
 
   private getClient(apiKey: string): OpenAI {
@@ -2483,9 +3907,7 @@ export class OpenRouterProvider implements AIProvider {
       apiKey,
       baseURL: this.config.baseUrl,
       defaultHeaders: {
-        ...(this.config.siteUrl
-          ? { "HTTP-Referer": this.config.siteUrl }
-          : {}),
+        ...(this.config.siteUrl ? { "HTTP-Referer": this.config.siteUrl } : {}),
         ...(this.config.appName ? { "X-Title": this.config.appName } : {}),
       },
     });
@@ -2495,31 +3917,21 @@ export class OpenRouterProvider implements AIProvider {
   }
 
   private toOpenRouterMessages(messages: AIMessage[]): OpenRouterMessage[] {
-    return messages.map((message) => ({
-      role: message.role,
-      content: message.content,
-      ...(message.reasoning_details !== undefined
-        ? { reasoning_details: message.reasoning_details }
-        : {}),
+    return messages.map((m) => ({
+      role: m.role,
+      content: m.content,
+      ...(m.reasoning_details !== undefined ? { reasoning_details: m.reasoning_details } : {}),
     }));
   }
 
-  private toAssistantMessage(
-    response: OpenRouterCompletionResponse,
-  ): AIMessage {
+  private toAssistantMessage(response: OpenRouterCompletionResponse): AIMessage {
     const message = response.choices?.[0]?.message;
     const content = this.extractContent(message?.content);
-
-    if (!content) {
-      throw AppError.badGateway("Empty response from OpenRouter.");
-    }
-
+    if (!content) throw AppError.badGateway("Empty response from OpenRouter.");
     return {
       role: "assistant",
       content,
-      ...(message?.reasoning_details !== undefined
-        ? { reasoning_details: message.reasoning_details }
-        : {}),
+      ...(message?.reasoning_details !== undefined ? { reasoning_details: message.reasoning_details } : {}),
     };
   }
 
@@ -2549,9 +3961,7 @@ export class OpenRouterProvider implements AIProvider {
   }
 
   private normalizeRetriableError(_error: unknown): AppError {
-    return AppError.badGateway(
-      "All OpenRouter keys and free models are currently exhausted.",
-    );
+    return AppError.badGateway("All OpenRouter keys and models are currently exhausted.");
   }
 }
 
@@ -2565,26 +3975,58 @@ function getStatusCode(error: unknown): number | undefined {
 }
 
 ------------------------------------------------
+FILE: ./apps/api/src/services/providers/provider-factory.ts
+------------------------------------------------
+import { env } from "../../config/env";
+import type { AIProvider } from "./ai-provider";
+import { GeminiProvider } from "./gemini.provider";
+import { OpenRouterProvider } from "./openrouter.provider";
+
+let _instance: AIProvider | null = null;
+
+export function getAIProvider(): AIProvider {
+  if (!_instance) {
+    _instance = build();
+  }
+  return _instance;
+}
+
+function build(): AIProvider {
+  switch (env.ai.provider) {
+    case "openrouter":
+      if (!env.openRouter.apiKeys.length) {
+        throw new Error("OPENROUTER_API_KEYS must be set when AI_PROVIDER=openrouter.");
+      }
+      return new OpenRouterProvider({
+        apiKeys: env.openRouter.apiKeys,
+        freeModels: env.openRouter.freeModels,
+        baseUrl: env.openRouter.baseUrl,
+        appName: env.openRouter.appName,
+        siteUrl: env.openRouter.siteUrl,
+      });
+    case "gemini":
+    default:
+      return new GeminiProvider({
+        apiKey: env.geminiApiKey,
+        model: env.ai.model,
+      });
+  }
+}
+
+------------------------------------------------
 FILE: ./apps/api/src/services/user.service.ts
 ------------------------------------------------
-import { prisma } from "@algoforge/db";
+//# filename: apps/api/src/services/user.service.ts
+
 import { type SafeUser } from "@algoforge/analysis";
+import { userRepository } from "../repositories/user.repository";
 import { verifyAccessToken } from "../utils/token";
+import { sessionRepository } from "../repositories/session.repository";
 
 class UserService {
   async getUserById(userId: string): Promise<SafeUser | null> {
-    const user = await prisma.user.findUnique({
-      where: { id: userId },
-      select: {
-        id: true,
-        name: true,
-        username: true,
-        image: true,
-      },
-    });
-
+    const user = await userRepository.findPublicById(userId);
     if (!user) return null;
-
     return {
       id: user.id,
       name: user.name,
@@ -2596,18 +4038,11 @@ class UserService {
   async getUserByToken(token: string): Promise<SafeUser | null> {
     try {
       const payload = verifyAccessToken(token);
-
-      const session = await prisma.session.findFirst({
-        where: {
-          id: payload.sessionId,
-          userId: payload.sub,
-          revokedAt: null,
-          expiresAt: { gt: new Date() },
-        },
-      });
-
+      const session = await sessionRepository.findActiveById(
+        payload.sessionId,
+        payload.sub,
+      );
       if (!session) return null;
-
       return this.getUserById(payload.sub);
     } catch {
       return null;
@@ -2618,53 +4053,23 @@ class UserService {
 export const userService = new UserService();
 
 ------------------------------------------------
+FILE: ./apps/api/src/types/algorithm.types.ts
+------------------------------------------------
+// Shared types for the algorithm service modules.
+
+export type AlgorithmQuery = {
+  categoryId?:  string;
+  difficulty?:  string;
+  isPublished?: boolean;
+  search?:      string;
+};
+
+------------------------------------------------
 FILE: ./apps/api/src/types/express.d.ts
 ------------------------------------------------
+//# filename: apps/api/src/types/express.d.ts
+
 import { Role } from "@algoforge/db";
-
-type AnalysisResult = {
-  summary: string;
-
-  complexity: {
-    time: {
-      best: string;
-      average: string;
-      worst: string;
-    };
-    space: string;
-  };
-
-  breakdown: {
-    approach: string;
-    steps: string[];
-  };
-
-  bottlenecks: {
-    issue: string;
-    impact: string;
-    location?: string;
-  }[];
-
-  antiPatterns: string[];
-
-  improvements: {
-    suggestion: string;
-    expectedImpact: string;
-  }[];
-
-  optimizedCode: string;
-
-  comparison?: {
-    originalVsOptimized: string;
-    improvementSummary: string;
-  };
-
-  edgeCases: string[];
-
-  readabilityScore?: number;
-
-  tags?: string[];
-};
 
 declare global {
   namespace Express {
@@ -2682,7 +4087,9 @@ declare global {
           expiresAt: Date;
         };
       };
-      analysisResult?: AnalysisResult;
+      // Set by requireAdminSecret middleware when the X-Admin-Secret header
+      // is valid. Allows the admin endpoint without a user JWT.
+      adminViaSecret?: true;
     }
   }
 }
@@ -2699,6 +4106,8 @@ export class AppError extends Error {
     public readonly code: string,
   ) {
     super(message);
+    this.name = "AppError";
+    Object.setPrototypeOf(this, new.target.prototype);
   }
 
   static badRequest(message: string): AppError {
@@ -2717,6 +4126,10 @@ export class AppError extends Error {
     return new AppError(404, message, "NOT_FOUND");
   }
 
+  static tooManyRequests(message: string): AppError {
+    return new AppError(429, message, "TOO_MANY_REQUESTS");
+  }
+
   static badGateway(message: string): AppError {
     return new AppError(502, message, "BAD_GATEWAY");
   }
@@ -2725,7 +4138,6 @@ export class AppError extends Error {
     return new AppError(500, message, "INTERNAL_ERROR");
   }
 }
-
 
 ------------------------------------------------
 FILE: ./apps/api/src/utils/async-handler.ts
@@ -3041,87 +4453,94 @@ export function validateSlugParam(
 ------------------------------------------------
 FILE: ./apps/api/src/validation/analysis.ts
 ------------------------------------------------
+/**
+ * Validation for analysis endpoints.
+ *
+ * Cursor strategy: the client receives an opaque base64url string.
+ * Internally it encodes { createdAt, id } so the repository can do
+ * a stable keyset paginate across (createdAt DESC, id DESC).
+ */
 import {
   CreateAnalysisInputSchema,
   type CreateAnalysisInput,
 } from "@algoforge/analysis";
 import { AppError } from "../utils/app-error";
 
+// ─── Types ────────────────────────────────────────────────────────────────────
+
 export type AnalysisInput = CreateAnalysisInput;
 
+/** Decoded, ready-to-use query that the service and repository accept. */
 export type AnalysisHistoryQuery = {
-  cursor: string | null;
-  limit: number;
+  cursorCreatedAt?: Date;
+  cursorId?:        string;
+  limit:            number;
 };
 
 export type AnalysisCursor = {
-  createdAt: string;
-  id: string;
+  createdAt: string; // ISO 8601
+  id:        string;
 };
 
-const DEFAULT_ANALYSIS_PAGE_SIZE = 10;
-const MAX_ANALYSIS_PAGE_SIZE = 50;
+// ─── Constants ────────────────────────────────────────────────────────────────
+
+const DEFAULT_PAGE_SIZE = 10;
+const MAX_PAGE_SIZE     = 50;
+
+// ─── Parsers ──────────────────────────────────────────────────────────────────
 
 export function parseAnalysisInput(value: unknown): AnalysisInput {
   const result = CreateAnalysisInputSchema.safeParse(value);
-
   if (!result.success) {
     throw AppError.badRequest(
       result.error.issues[0]?.message ?? "Invalid analysis request.",
     );
   }
-
   return result.data;
 }
 
-export function parseAnalysisHistoryQuery(
-  value: unknown,
-): AnalysisHistoryQuery {
+/**
+ * Parses raw query-string params into a typed, decoded query object.
+ * The `cursor` param (if present) is base64url-decoded into createdAt + id
+ * so the repository layer never touches raw cursor strings.
+ */
+export function parseAnalysisHistoryQuery(value: unknown): AnalysisHistoryQuery {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return {
-      cursor: null,
-      limit: DEFAULT_ANALYSIS_PAGE_SIZE,
-    };
+    return { limit: DEFAULT_PAGE_SIZE };
   }
 
   const query = value as Record<string, unknown>;
-  const cursorValue = query.cursor;
-  const limitValue = query.limit;
 
-  if (Array.isArray(cursorValue) || Array.isArray(limitValue)) {
-    throw AppError.badRequest("Invalid analysis history query.");
+  // ── limit ──────────────────────────────────────────────────────────────────
+  const rawLimit = typeof query.limit === "undefined"
+    ? DEFAULT_PAGE_SIZE
+    : Number(query.limit);
+
+  if (!Number.isInteger(rawLimit))          throw AppError.badRequest("Limit must be an integer.");
+  if (rawLimit < 1)                         throw AppError.badRequest("Limit must be at least 1.");
+  if (rawLimit > MAX_PAGE_SIZE)             throw AppError.badRequest(`Limit cannot exceed ${MAX_PAGE_SIZE}.`);
+
+  // ── cursor ─────────────────────────────────────────────────────────────────
+  const rawCursor = query.cursor;
+  if (Array.isArray(rawCursor))             throw AppError.badRequest("Invalid cursor.");
+
+  if (typeof rawCursor === "undefined" || rawCursor === "") {
+    return { limit: rawLimit };
   }
 
-  let cursor: string | null = null;
-  if (typeof cursorValue !== "undefined") {
-    if (typeof cursorValue !== "string" || !cursorValue.trim()) {
-      throw AppError.badRequest("Cursor must be a non-empty string.");
-    }
-    cursor = cursorValue.trim();
+  if (typeof rawCursor !== "string" || !rawCursor.trim()) {
+    throw AppError.badRequest("Cursor must be a non-empty string.");
   }
 
-  const rawLimit =
-    typeof limitValue === "undefined"
-      ? DEFAULT_ANALYSIS_PAGE_SIZE
-      : Number(limitValue);
-
-  if (!Number.isInteger(rawLimit)) {
-    throw AppError.badRequest("Limit must be an integer.");
-  }
-
-  if (rawLimit < 1) {
-    throw AppError.badRequest("Limit must be at least 1.");
-  }
-
-  if (rawLimit > MAX_ANALYSIS_PAGE_SIZE) {
-    throw AppError.badRequest(`Limit cannot exceed ${MAX_ANALYSIS_PAGE_SIZE}.`);
-  }
-
+  const decoded = decodeAnalysisCursor(rawCursor.trim());
   return {
-    cursor,
-    limit: rawLimit,
+    cursorCreatedAt: new Date(decoded.createdAt),
+    cursorId:        decoded.id,
+    limit:           rawLimit,
   };
 }
+
+// ─── Cursor codec ─────────────────────────────────────────────────────────────
 
 export function encodeAnalysisCursor(cursor: AnalysisCursor): string {
   return Buffer.from(JSON.stringify(cursor), "utf8").toString("base64url");
@@ -3130,21 +4549,18 @@ export function encodeAnalysisCursor(cursor: AnalysisCursor): string {
 export function decodeAnalysisCursor(cursor: string): AnalysisCursor {
   try {
     const decoded = Buffer.from(cursor, "base64url").toString("utf8");
-    const value = JSON.parse(decoded) as Partial<AnalysisCursor>;
+    const value   = JSON.parse(decoded) as Partial<AnalysisCursor>;
 
     if (
       typeof value.createdAt !== "string" ||
       Number.isNaN(Date.parse(value.createdAt)) ||
-      typeof value.id !== "string" ||
+      typeof value.id        !== "string" ||
       !value.id.trim()
     ) {
       throw new Error("Malformed cursor.");
     }
 
-    return {
-      createdAt: value.createdAt,
-      id: value.id.trim(),
-    };
+    return { createdAt: value.createdAt, id: value.id.trim() };
   } catch {
     throw AppError.badRequest("Invalid cursor.");
   }
@@ -3192,6 +4608,75 @@ export function ensureString(value: unknown, message: string): string {
   }
   return value.trim();
 }
+
+------------------------------------------------
+FILE: ./apps/api/src/validation/explanation-session.ts
+------------------------------------------------
+import { z } from "zod";
+import { AppError } from "../utils/app-error";
+
+export const CreateSessionSchema = z.object({
+  title: z.string().trim().min(1).max(200).optional(),
+});
+
+export const SendMessageSchema = z.object({
+  query: z
+    .string()
+    .trim()
+    .min(5, "Query must be at least 5 characters.")
+    .max(2_000, "Query is too long."),
+});
+
+export const ListSessionsQuerySchema = z.object({
+  limit:  z.coerce.number().int().min(1).max(50).default(20),
+  cursor: z.string().optional(),
+});
+
+export type CreateSessionInput = z.infer<typeof CreateSessionSchema>;
+export type SendMessageInput   = z.infer<typeof SendMessageSchema>;
+export type ListSessionsQuery  = z.infer<typeof ListSessionsQuerySchema>;
+
+export function parseCreateSession(value: unknown): CreateSessionInput {
+  const r = CreateSessionSchema.safeParse(value);
+  if (!r.success) throw AppError.badRequest(r.error.issues[0]?.message ?? "Invalid session data.");
+  return r.data;
+}
+
+export function parseSendMessage(value: unknown): SendMessageInput {
+  const r = SendMessageSchema.safeParse(value);
+  if (!r.success) throw AppError.badRequest(r.error.issues[0]?.message ?? "Invalid message.");
+  return r.data;
+}
+
+export function parseListSessionsQuery(value: unknown): ListSessionsQuery {
+  const r = ListSessionsQuerySchema.safeParse(value);
+  if (!r.success) throw AppError.badRequest(r.error.issues[0]?.message ?? "Invalid query params.");
+  return r.data;
+}
+
+------------------------------------------------
+FILE: ./packages/analysis/src/analysis.schema.ts
+------------------------------------------------
+import { z } from "zod";
+import { AnalysisResultSchema } from "./schema";
+
+export const SharedAnalysisSchema = z.object({
+  id: z.string(),
+  code: z.string(),
+  language: z.string(),
+  result: AnalysisResultSchema,
+  createdAt: z.string(),
+  creator: z
+    .object({
+      id: z.string(),
+      name: z.string().nullable(),
+      username: z.string().nullable(),
+      avatarUrl: z.string().nullable(),
+    })
+    .optional(),
+});
+
+export type SharedAnalysis = z.infer<typeof SharedAnalysisSchema>;
 
 ------------------------------------------------
 FILE: ./packages/analysis/src/index.ts
@@ -3320,6 +4805,8 @@ export * from "@prisma/client";
 ------------------------------------------------
 FILE: ./packages/db/prisma/schema.prisma
 ------------------------------------------------
+// filename: packages/db/prisma/schema.prisma
+
 generator client {
   provider = "prisma-client-js"
 }
@@ -3341,79 +4828,108 @@ enum Difficulty {
 }
 
 model User {
-  id        String    @id @default(cuid())
-  email     String?   @unique
-  username  String?   @unique
+  id        String     @id @default(cuid())
+  email     String?    @unique
+  username  String?    @unique
   name      String?
   image     String?
-  role      Role      @default(USER)
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
+  role      Role       @default(USER)
+  createdAt DateTime   @default(now()) @map("created_at")
+  updatedAt DateTime   @updatedAt @map("updated_at")
 
-  accounts  Account[]
-  sessions  Session[]
-  analyses  Analysis[]
+  accounts            Account[]
+  sessions            Session[]
+  analyses            Analysis[]
+  explanationSessions ExplanationSession[]
 
   @@index([email])
   @@index([username])
+  @@map("users")
 }
 
 model Account {
-  id                String  @id @default(cuid())
-  userId            String
+  id                String @id @default(cuid())
+  userId            String @map("user_id")
   provider          String
-  providerAccountId String
-  user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  providerAccountId String @map("provider_account_id")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([provider, providerAccountId])
   @@index([userId])
+  @@map("accounts")
 }
 
 model Session {
-  id             String    @id @default(cuid())
-  userId         String
-  tokenHash      String
-  expiresAt      DateTime
-  revokedAt      DateTime?
-  lastUsedAt     DateTime
-  ipAddress      String?
-  userAgent      String?
-  rotatedFromId  String?
-  user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id            String    @id @default(cuid())
+  userId        String    @map("user_id")
+  tokenHash     String    @map("token_hash")
+  expiresAt     DateTime  @map("expires_at")
+  revokedAt     DateTime? @map("revoked_at")
+  lastUsedAt    DateTime  @map("last_used_at")
+  ipAddress     String?   @map("ip_address")
+  userAgent     String?   @map("user_agent")
+  rotatedFromId String?   @map("rotated_from_id")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
   @@index([tokenHash])
+  @@map("sessions")
 }
 
 model Analysis {
-  id           String   @id @default(cuid())
-  userId       String
-  code         String
-  language     String
-  complexity   String?
-  suggestion   String?
-  timeEstimate String?
-  result       Json
-  shareId      String?  @unique
-  isPublic     Boolean  @default(false)
-  createdAt    DateTime @default(now())
-  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id         String   @id @default(cuid())
+  userId     String   @map("user_id")
+  code       String
+  language   String
+  complexity String?
+  suggestion String?
+  result     Json
+  shareId    String?  @unique @map("share_id")
+  isPublic   Boolean  @default(false) @map("is_public")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, createdAt])
   @@index([shareId])
+  @@map("analyses")
+}
+
+// Persistent AI explanation chat sessions.
+// Each session stores an ordered list of user/assistant messages as JSON.
+// Sessions can be shared publicly via a generated shareId.
+model ExplanationSession {
+  id        String   @id @default(cuid())
+  userId    String   @map("user_id")
+  title     String?                      // Auto-set from first message if not provided
+  shareId   String?  @unique @map("share_id")
+  isPublic  Boolean  @default(false)     @map("is_public")
+  messages  Json     @default("[]")      // Array of SessionMessage objects
+  createdAt DateTime @default(now())     @map("created_at")
+  updatedAt DateTime @updatedAt          @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([shareId])
+  @@map("explanation_sessions")
 }
 
 model Category {
   id          String      @id
   label       String
   description String?
-  iconName    String?
-  sortOrder   Int         @default(0)
-  createdAt   DateTime    @default(now())
-  updatedAt   DateTime    @updatedAt
-  algorithms  Algorithm[]
+  iconName    String?     @map("icon_name")
+  sortOrder   Int         @default(0) @map("sort_order")
+  createdAt   DateTime    @default(now()) @map("created_at")
+  updatedAt   DateTime    @updatedAt @map("updated_at")
+
+  algorithms Algorithm[]
 
   @@index([sortOrder])
+  @@map("categories")
 }
 
 model Algorithm {
@@ -3421,69 +4937,71 @@ model Algorithm {
   slug            String     @unique
   name            String
   description     String
-  categoryId      String
+  categoryId      String     @map("category_id")
   difficulty      Difficulty @default(beginner)
-  isPublished     Boolean    @default(false)
-  createdAt       DateTime   @default(now())
-  updatedAt       DateTime   @updatedAt
+  isPublished     Boolean    @default(false) @map("is_published")
+  timeBest        String?    @map("time_best")
+  timeAverage     String?    @map("time_average")
+  timeWorst       String?    @map("time_worst")
+  spaceComplexity String?    @map("space_complexity")
+  createdAt       DateTime   @default(now()) @map("created_at")
+  updatedAt       DateTime   @updatedAt @map("updated_at")
 
-  category        Category   @relation(fields: [categoryId], references: [id])
-  complexity      Complexity?
-  displayCode     DisplayCode?
-  forge           AlgorithmForge?
-  tags            AlgorithmTag[]
+  category     Category       @relation(fields: [categoryId], references: [id])
+  displayCodes DisplayCode[]
+  forge        ForgeConfig?
+  tags         AlgorithmTag[]
 
   @@index([categoryId])
   @@index([slug])
   @@index([difficulty])
   @@index([isPublished])
-}
-
-model Complexity {
-  id            String    @id @default(uuid())
-  algorithmId   String    @unique
-  timeBest      String?
-  timeAverage   String?
-  timeWorst     String?
-  space         String?
-
-  algorithm     Algorithm @relation(fields: [algorithmId], references: [id], onDelete: Cascade)
+  @@map("algorithms")
 }
 
 model DisplayCode {
-  id            String    @id @default(uuid())
-  algorithmId   String    @unique
-  language      String
-  code          String
+  id          String @id @default(uuid())
+  algorithmId String @map("algorithm_id")
+  language    String
+  code        String
 
-  algorithm     Algorithm @relation(fields: [algorithmId], references: [id], onDelete: Cascade)
+  algorithm Algorithm @relation(fields: [algorithmId], references: [id], onDelete: Cascade)
+
+  @@unique([algorithmId, language])
+  @@index([algorithmId])
+  @@map("display_codes")
 }
 
-model AlgorithmForge {
-  id            String    @id @default(uuid())
-  algorithmId   String    @unique
-  forgeCode     Json
-  inputSchema   Json
-  guardRanges   Json
-  version       Int       @default(1)
+model ForgeConfig {
+  id          String @id @default(uuid())
+  algorithmId String @unique @map("algorithm_id")
+  forgeCode   Json   @map("forge_code")
+  inputSchema Json   @map("input_schema")
+  guardRanges Json   @map("guard_ranges")
+  version     Int    @default(1)
 
-  algorithm     Algorithm @relation(fields: [algorithmId], references: [id], onDelete: Cascade)
+  algorithm Algorithm @relation(fields: [algorithmId], references: [id], onDelete: Cascade)
+
+  @@map("forge_configs")
 }
 
 model Tag {
-  id            String    @id @default(uuid())
-  label         String    @unique
-  algorithms    AlgorithmTag[]
+  id         String         @id @default(uuid())
+  label      String         @unique
+  algorithms AlgorithmTag[]
+
+  @@map("tags")
 }
 
 model AlgorithmTag {
-  algorithmId   String
-  tagId         String
+  algorithmId String @map("algorithm_id")
+  tagId       String @map("tag_id")
 
-  algorithm     Algorithm @relation(fields: [algorithmId], references: [id], onDelete: Cascade)
-  tag           Tag       @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  algorithm Algorithm @relation(fields: [algorithmId], references: [id], onDelete: Cascade)
+  tag       Tag       @relation(fields: [tagId], references: [id], onDelete: Cascade)
 
   @@id([algorithmId, tagId])
+  @@map("algorithm_tags")
 }
 
 ------------------------------------------------
@@ -3711,6 +5229,8 @@ export class ForgeRecorder {
 ------------------------------------------------
 FILE: ./packages/forge/src/schemas.ts
 ------------------------------------------------
+// filename: packages/forge/src/schemas.ts
+
 import { z } from "zod";
 
 export const StructureTypeSchema = z.enum([
@@ -3774,87 +5294,135 @@ export const GuardRangesSchema = z.object({
   startNode: z.enum(["first", "random"]).optional(),
 });
 
-export const InputSchema = z.record(z.string(), z.unknown());
+const JsonValueSchema: z.ZodType<
+  string | number | boolean | null | { [key: string]: unknown } | unknown[]
+> = z.lazy(() =>
+  z.union([
+    z.string(),
+    z.number(),
+    z.boolean(),
+    z.null(),
+    z.array(JsonValueSchema),
+    z.record(z.string(), JsonValueSchema),
+  ]),
+);
 
-export const CreateCategorySchema = z.object({
-  id: z.string().min(1).max(50).optional(),
-  label: z.string().min(1).max(100),
-  description: z.string().max(500).optional(),
-  iconName: z.string().max(50).optional(),
-  sortOrder: z.number().int().default(0),
+export const InputSchema = z.record(z.string(), JsonValueSchema);
+
+// Structures that require explicit guard ranges. Stack, queue, linkedList,
+// and memory do not have configurable input constraints.
+const GUARDED_STRUCTURES = ["array", "graph", "tree"] as const;
+type GuardedStructure = (typeof GUARDED_STRUCTURES)[number];
+
+function crossValidateGuardRanges(
+  requiredStructures: string[],
+  guardRanges: z.infer<typeof GuardRangesSchema>,
+  ctx: z.RefinementCtx,
+  basePath: (string | number)[],
+): void {
+  for (const structure of requiredStructures) {
+    if (!GUARDED_STRUCTURES.includes(structure as GuardedStructure)) continue;
+    const key = structure as GuardedStructure;
+    if (!guardRanges[key]) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `forge.guardRanges.${key} is required when forge.forgeCode.requiredStructures includes "${key}".`,
+        path: [...basePath, key],
+      });
+    }
+  }
+}
+
+const DisplayCodeEntrySchema = z.object({
+  language: z.string().min(1),
+  code: z.string().min(1),
 });
 
-export const UpdateCategorySchema = CreateCategorySchema.partial().omit({ id: true });
+export const CreateAlgorithmSchema = z
+  .object({
+    slug: z.string().min(1).max(100).regex(/^[a-z0-9-]+$/),
+    name: z.string().min(1).max(200),
+    description: z.string().min(1).max(2000),
+    categoryId: z.string().min(1),
+    difficulty: DifficultySchema.default("beginner"),
+    isPublished: z.boolean().default(false).optional(),
 
-export const CreateAlgorithmSchema = z.object({
-  slug: z.string().min(1).max(100).regex(/^[a-z0-9-]+$/),
-  name: z.string().min(1).max(200),
-  description: z.string().min(1).max(2000),
-  categoryId: z.string().min(1),
-  difficulty: DifficultySchema.default("beginner"),
-  isPublished: z.boolean().default(false).optional(),
-
-  complexity: z.object({
-    time: z.object({
-      best: z.string().min(1),
-      average: z.string().min(1),
-      worst: z.string().min(1),
+    complexity: z.object({
+      time: z.object({
+        best: z.string().min(1),
+        average: z.string().min(1),
+        worst: z.string().min(1),
+      }),
+      space: z.string().min(1),
     }),
-    space: z.string().min(1),
-  }),
 
-  displayCode: z.object({
-    code: z.string().min(1),
-    language: z.string().min(1),
-  }),
+    // Accepts multiple display-code variants (e.g. js + python).
+    // Must include at least one entry. Forge code is always JS and separate.
+    displayCodes: z.array(DisplayCodeEntrySchema).min(1),
 
-  forge: z.object({
-    forgeCode: ForgeCodeSchema,
-    inputSchema: InputSchema,
-    guardRanges: GuardRangesSchema,
-  }),
+    forge: z.object({
+      forgeCode: ForgeCodeSchema,
+      inputSchema: InputSchema,
+      guardRanges: GuardRangesSchema,
+    }),
 
-  tags: z.array(z.string().min(1)),
-});
+    tags: z.array(z.string().min(1)),
+  })
+  .superRefine((data, ctx) => {
+    crossValidateGuardRanges(
+      data.forge.forgeCode.requiredStructures,
+      data.forge.guardRanges,
+      ctx,
+      ["forge", "guardRanges"],
+    );
+  });
 
-export const UpdateAlgorithmSchema = z.object({
-  slug: z.string().min(1).max(100).regex(/^[a-z0-9-]+$/).optional(),
-  name: z.string().min(1).max(200).optional(),
-  description: z.string().min(1).max(2000).optional(),
-  categoryId: z.string().min(1).optional(),
-  difficulty: DifficultySchema.optional(),
-  isPublished: z.boolean().optional(),
+export const UpdateAlgorithmSchema = z
+  .object({
+    slug: z.string().min(1).max(100).regex(/^[a-z0-9-]+$/).optional(),
+    name: z.string().min(1).max(200).optional(),
+    description: z.string().min(1).max(2000).optional(),
+    categoryId: z.string().min(1).optional(),
+    difficulty: DifficultySchema.optional(),
+    isPublished: z.boolean().optional(),
 
-  complexity: z
-    .object({
-      time: z
-        .object({
-          best: z.string().min(1).optional(),
-          average: z.string().min(1).optional(),
-          worst: z.string().min(1).optional(),
-        })
-        .optional(),
-      space: z.string().min(1).optional(),
-    })
-    .optional(),
+    complexity: z
+      .object({
+        time: z
+          .object({
+            best: z.string().min(1).optional(),
+            average: z.string().min(1).optional(),
+            worst: z.string().min(1).optional(),
+          })
+          .optional(),
+        space: z.string().min(1).optional(),
+      })
+      .optional(),
 
-  displayCode: z
-    .object({
-      code: z.string().min(1).optional(),
-      language: z.string().min(1).optional(),
-    })
-    .optional(),
+    // When provided, replaces all display-code entries (same pattern as tags).
+    displayCodes: z.array(DisplayCodeEntrySchema).min(1).optional(),
 
-  forge: z
-    .object({
-      forgeCode: ForgeCodeSchema.optional(),
-      inputSchema: InputSchema.optional(),
-      guardRanges: GuardRangesSchema.optional(),
-    })
-    .optional(),
+    forge: z
+      .object({
+        forgeCode: ForgeCodeSchema.optional(),
+        inputSchema: InputSchema.optional(),
+        guardRanges: GuardRangesSchema.optional(),
+      })
+      .optional(),
 
-  tags: z.array(z.string().min(1)).optional(),
-});
+    tags: z.array(z.string().min(1)).optional(),
+  })
+  .superRefine((data, ctx) => {
+    // Only cross-validate when both sides of forge are supplied in the update.
+    const structures = data.forge?.forgeCode?.requiredStructures;
+    const guardRanges = data.forge?.guardRanges;
+    if (structures && guardRanges) {
+      crossValidateGuardRanges(structures, guardRanges, ctx, [
+        "forge",
+        "guardRanges",
+      ]);
+    }
+  });
 
 export const CategoryResponseSchema = z.object({
   id: z.string(),
@@ -3902,12 +5470,7 @@ export const AlgorithmDetailSchema = z.object({
       code: z.string(),
     })
     .nullable(),
-  tags: z.array(
-    z.object({
-      id: z.string(),
-      label: z.string(),
-    }),
-  ),
+  tags: z.array(z.object({ id: z.string(), label: z.string() })),
   forge: z
     .object({
       forgeCode: ForgeCodeSchema,
@@ -3936,6 +5499,18 @@ export const AlgorithmExecutionSchema = z.union([
   }),
 ]);
 
+export const CreateCategorySchema = z.object({
+  id: z.string().min(1).max(50).optional(),
+  label: z.string().min(1).max(100),
+  description: z.string().max(500).optional(),
+  iconName: z.string().max(50).optional(),
+  sortOrder: z.number().int().default(0),
+});
+
+export const UpdateCategorySchema = CreateCategorySchema.partial().omit({
+  id: true,
+});
+
 export type CreateCategory = z.infer<typeof CreateCategorySchema>;
 export type UpdateCategory = z.infer<typeof UpdateCategorySchema>;
 export type CreateAlgorithm = z.infer<typeof CreateAlgorithmSchema>;
@@ -3944,6 +5519,7 @@ export type CategoryResponse = z.infer<typeof CategoryResponseSchema>;
 export type AlgorithmListItem = z.infer<typeof AlgorithmListItemSchema>;
 export type AlgorithmDetail = z.infer<typeof AlgorithmDetailSchema>;
 export type AlgorithmExecution = z.infer<typeof AlgorithmExecutionSchema>;
+
 
 ------------------------------------------------
 FILE: ./packages/forge/src/types.ts

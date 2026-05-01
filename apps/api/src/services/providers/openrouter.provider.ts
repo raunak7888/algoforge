@@ -20,17 +20,13 @@ type OpenRouterChoiceMessage = {
 };
 
 type OpenRouterCompletionResponse = {
-  choices?: Array<{
-    message?: OpenRouterChoiceMessage;
-  }>;
+  choices?: Array<{ message?: OpenRouterChoiceMessage }>;
 };
 
 type OpenRouterChatRequest = {
   model: string;
   messages: OpenRouterMessage[];
-  reasoning: {
-    enabled: boolean;
-  };
+  reasoning: { enabled: boolean };
 };
 
 export class OpenRouterProvider implements AIProvider {
@@ -52,7 +48,6 @@ export class OpenRouterProvider implements AIProvider {
     if (!config.apiKeys.length) {
       throw AppError.internal("Missing OpenRouter API keys.");
     }
-
     if (!config.freeModels.length) {
       throw AppError.internal("Missing OpenRouter free models.");
     }
@@ -65,19 +60,11 @@ export class OpenRouterProvider implements AIProvider {
 
     let lastRetriableError: unknown;
 
-    for (
-      let modelAttempt = 0;
-      modelAttempt < this.config.freeModels.length;
-      modelAttempt++
-    ) {
-      const modelState = this.getModelState(modelAttempt);
+    for (let modelOffset = 0; modelOffset < this.config.freeModels.length; modelOffset++) {
+      const modelState = this.getModelState(modelOffset);
 
-      for (
-        let keyAttempt = 0;
-        keyAttempt < this.config.apiKeys.length;
-        keyAttempt++
-      ) {
-        const keyState = this.getKeyState(modelState.model, keyAttempt);
+      for (let keyOffset = 0; keyOffset < this.config.apiKeys.length; keyOffset++) {
+        const keyState = this.getKeyState(modelState.model, keyOffset);
 
         try {
           const client = this.getClient(keyState.apiKey);
@@ -111,10 +98,9 @@ export class OpenRouterProvider implements AIProvider {
               modelState.model,
               (keyState.actualIndex + 1) % this.config.apiKeys.length,
             );
-
             if (!env.isProduction) {
               console.warn(
-                `[AI][openrouter] Key ${keyState.actualIndex} failed for model "${modelState.model}" (Status: ${statusCode}). Trying next key...`,
+                `[AI][openrouter] Key ${keyState.actualIndex} throttled for model "${modelState.model}". Rotating.`,
               );
             }
             continue;
@@ -125,37 +111,23 @@ export class OpenRouterProvider implements AIProvider {
       }
 
       if (!env.isProduction) {
-        console.warn(
-          `[AI][openrouter] All keys exhausted for model "${modelState.model}". Rotating to next available model.`,
-        );
+        console.warn(`[AI][openrouter] All keys exhausted for model "${modelState.model}". Rotating model.`);
       }
-
-      this.modelIndex =
-        (modelState.actualIndex + 1) % this.config.freeModels.length;
+      this.modelIndex = (modelState.actualIndex + 1) % this.config.freeModels.length;
     }
 
     throw this.normalizeRetriableError(lastRetriableError);
   }
 
   private getModelState(offset: number): { actualIndex: number; model: string } {
-    const actualIndex =
-      (this.modelIndex + offset) % this.config.freeModels.length;
-    return {
-      actualIndex,
-      model: this.config.freeModels[actualIndex],
-    };
+    const actualIndex = (this.modelIndex + offset) % this.config.freeModels.length;
+    return { actualIndex, model: this.config.freeModels[actualIndex] };
   }
 
-  private getKeyState(
-    model: string,
-    offset: number,
-  ): { actualIndex: number; apiKey: string } {
+  private getKeyState(model: string, offset: number): { actualIndex: number; apiKey: string } {
     const startIndex = this.keyIndexByModel.get(model) ?? 0;
     const actualIndex = (startIndex + offset) % this.config.apiKeys.length;
-    return {
-      actualIndex,
-      apiKey: this.config.apiKeys[actualIndex],
-    };
+    return { actualIndex, apiKey: this.config.apiKeys[actualIndex] };
   }
 
   private getClient(apiKey: string): OpenAI {
@@ -166,9 +138,7 @@ export class OpenRouterProvider implements AIProvider {
       apiKey,
       baseURL: this.config.baseUrl,
       defaultHeaders: {
-        ...(this.config.siteUrl
-          ? { "HTTP-Referer": this.config.siteUrl }
-          : {}),
+        ...(this.config.siteUrl ? { "HTTP-Referer": this.config.siteUrl } : {}),
         ...(this.config.appName ? { "X-Title": this.config.appName } : {}),
       },
     });
@@ -178,31 +148,21 @@ export class OpenRouterProvider implements AIProvider {
   }
 
   private toOpenRouterMessages(messages: AIMessage[]): OpenRouterMessage[] {
-    return messages.map((message) => ({
-      role: message.role,
-      content: message.content,
-      ...(message.reasoning_details !== undefined
-        ? { reasoning_details: message.reasoning_details }
-        : {}),
+    return messages.map((m) => ({
+      role: m.role,
+      content: m.content,
+      ...(m.reasoning_details !== undefined ? { reasoning_details: m.reasoning_details } : {}),
     }));
   }
 
-  private toAssistantMessage(
-    response: OpenRouterCompletionResponse,
-  ): AIMessage {
+  private toAssistantMessage(response: OpenRouterCompletionResponse): AIMessage {
     const message = response.choices?.[0]?.message;
     const content = this.extractContent(message?.content);
-
-    if (!content) {
-      throw AppError.badGateway("Empty response from OpenRouter.");
-    }
-
+    if (!content) throw AppError.badGateway("Empty response from OpenRouter.");
     return {
       role: "assistant",
       content,
-      ...(message?.reasoning_details !== undefined
-        ? { reasoning_details: message.reasoning_details }
-        : {}),
+      ...(message?.reasoning_details !== undefined ? { reasoning_details: message.reasoning_details } : {}),
     };
   }
 
@@ -232,9 +192,7 @@ export class OpenRouterProvider implements AIProvider {
   }
 
   private normalizeRetriableError(_error: unknown): AppError {
-    return AppError.badGateway(
-      "All OpenRouter keys and free models are currently exhausted.",
-    );
+    return AppError.badGateway("All OpenRouter keys and models are currently exhausted.");
   }
 }
 

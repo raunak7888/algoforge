@@ -1,123 +1,85 @@
-//# filename: apps/api/src/services/analysis.service.ts
-
-import {
-  AnalysisHistoryItemSchema,
-  AnalysisRecordSchema,
-  SharedAnalysisSchema,
-  type AnalysisHistoryResponse,
-  type CreateAnalysisInput,
-} from "@algoforge/analysis";
-import { Prisma } from "@algoforge/db";
-import { aiService } from "./ai.service";
-import { analysisRepository } from "../repositories/analysis.repository";
-import {
-  decodeAnalysisCursor,
-  encodeAnalysisCursor,
-  type AnalysisHistoryQuery,
-} from "../validation/analysis";
-import { AppError } from "../utils/app-error";
+/**
+ * Analysis service.
+ *
+ * Cache strategy (two-layer LRU + Redis):
+ *   - AI result is cached by SHA-256 of (language + code) so identical
+ *     submissions never hit the AI provider twice.
+ *   - The DB record is always written — cache only shields the AI call.
+ */
+import { createHash, randomBytes } from "crypto";
 import { env } from "../config/env";
+import { analysisRepository } from "../repositories/analysis.repository";
+import { aiService } from "./ai.service";
+import { AppError } from "../utils/app-error";
+import { SharedAnalysisSchema, type AnalysisResult } from "@algoforge/analysis";
+import type { AnalysisInput, AnalysisHistoryQuery } from "../validation/analysis";
+import { layeredCache } from "./lib/Layered.cache";
 
-function extractComplexityString(value: Prisma.JsonValue | null): string | null {
-  if (value === null || value === undefined) return null;
-  if (typeof value === "string") return value;
-  if (typeof value === "object" && !Array.isArray(value)) {
-    const obj = value as Record<string, unknown>;
-    const time = obj["time"];
-    if (time !== null && typeof time === "object" && !Array.isArray(time)) {
-      const worst = (time as Record<string, unknown>)["worst"];
-      if (typeof worst === "string") return worst;
-    }
-  }
-  return null;
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+function aiCacheKey(language: string, code: string): string {
+  const hash = createHash("sha256").update(`${language}:${code}`).digest("hex").slice(0, 32);
+  return `ai:analysis:${hash}`;
 }
 
+function generateShareId(): string {
+  return randomBytes(9).toString("base64url");
+}
+
+// ─── Service ─────────────────────────────────────────────────────────────────
+
 class AnalysisService {
-  async createAnalysis(userId: string, input: CreateAnalysisInput) {
-    const analysisResult = await aiService.analyzeCode(input);
+  async createAnalysis(userId: string, input: AnalysisInput) {
+    const key = aiCacheKey(input.language, input.code);
 
-    const row = await analysisRepository.create({
+    // Try cache first — avoids calling the AI provider for duplicate code
+    let aiResult = await layeredCache.get<AnalysisResult>(key);
+
+    if (!aiResult) {
+      aiResult = await aiService.analyzeCode({
+        code:     input.code,
+        language: input.language,
+      });
+      await layeredCache.set(key, aiResult);
+    }
+
+    return analysisRepository.create({
       userId,
-      code: input.code,
-      language: input.language,
-      complexity: analysisResult.complexity.time.worst,
-      suggestion: analysisResult.improvements[0]?.suggestion ?? null,
-      result: analysisResult as unknown as Prisma.InputJsonValue,
-    });
-
-    return AnalysisRecordSchema.parse({
-      id: row.id,
-      language: row.language,
-      result: row.result,
-      createdAt: row.createdAt.toISOString(),
+      code:       input.code,
+      language:   input.language,
+      complexity: aiResult.complexity?.time?.average ?? null,
+      suggestion: aiResult.improvements?.[0]?.suggestion ?? null,
+      result:     aiResult as object,
     });
   }
 
-  async listUserAnalyses(
-    userId: string,
-    query: AnalysisHistoryQuery,
-  ): Promise<AnalysisHistoryResponse> {
-    const cursor = query.cursor ? decodeAnalysisCursor(query.cursor) : null;
-    const take = query.limit + 1;
-
+  async listUserAnalyses(userId: string, query: AnalysisHistoryQuery) {
     const rows = await analysisRepository.findManyByUser(userId, {
-      cursorCreatedAt: cursor ? new Date(cursor.createdAt) : undefined,
-      cursorId: cursor?.id,
-      take,
+      cursorCreatedAt: query.cursorCreatedAt,
+      cursorId:        query.cursorId,
+      take:            query.limit,
     });
-
-    const hasMore = rows.length > query.limit;
-    const page = hasMore ? rows.slice(0, query.limit) : rows;
-    const lastItem = page.at(-1);
-
-    return {
-      data: page.map((r) =>
-        AnalysisHistoryItemSchema.parse({
-          id: r.id,
-          language: r.language,
-          complexity: extractComplexityString(r.complexity as Prisma.JsonValue | null),
-          suggestion: r.suggestion,
-          createdAt: r.createdAt.toISOString(),
-        }),
-      ),
-      meta: {
-        nextCursor:
-          hasMore && lastItem
-            ? encodeAnalysisCursor({
-                createdAt: lastItem.createdAt.toISOString(),
-                id: lastItem.id,
-              })
-            : null,
-        hasMore,
-      },
-    };
+    return { analyses: rows };
   }
 
   async getUserAnalysisById(userId: string, analysisId: string) {
-    const row = await analysisRepository.findOneByUser(userId, analysisId);
-    if (!row) throw AppError.notFound("Analysis not found.");
-
-    return AnalysisRecordSchema.parse({
-      id: row.id,
-      language: row.language,
-      result: row.result,
-      createdAt: row.createdAt.toISOString(),
-    });
+    const analysis = await analysisRepository.findOneByUser(userId, analysisId);
+    if (!analysis) throw AppError.notFound("Analysis not found.");
+    return analysis;
   }
 
   async shareAnalysis(userId: string, analysisId: string) {
     const analysis = await analysisRepository.findForShare(analysisId, userId);
     if (!analysis) throw AppError.notFound("Analysis not found.");
 
+    // Idempotent — return existing share URL if already public
     if (analysis.shareId && analysis.isPublic) {
-      return { shareUrl: `${env.webAppUrl}/share/${analysis.shareId}` };
+      return { shareUrl: `${env.webAppUrl}/share/analysis/${analysis.shareId}` };
     }
 
-    const { nanoid } = await import("nanoid");
-    const shareId = nanoid(10);
+    const shareId = generateShareId();
     await analysisRepository.setPublic(analysisId, shareId);
-
-    return { shareUrl: `${env.webAppUrl}/share/${shareId}` };
+    return { shareUrl: `${env.webAppUrl}/share/analysis/${shareId}` };
   }
 
   async getPublicAnalysis(shareId: string) {
@@ -125,16 +87,16 @@ class AnalysisService {
     if (!analysis) throw AppError.notFound("Analysis not found or not public.");
 
     return SharedAnalysisSchema.parse({
-      id: analysis.id,
-      code: analysis.code,
-      language: analysis.language,
-      result: analysis.result,
+      id:        analysis.id,
+      code:      analysis.code,
+      language:  analysis.language,
+      result:    analysis.result,
       createdAt: analysis.createdAt.toISOString(),
-      creator: analysis.user
+      creator:   analysis.user
         ? {
-            id: analysis.user.id,
-            name: analysis.user.name,
-            username: analysis.user.username ?? analysis.user.name,
+            id:        analysis.user.id,
+            name:      analysis.user.name,
+            username:  analysis.user.username ?? analysis.user.name,
             avatarUrl: analysis.user.image,
           }
         : undefined,
@@ -142,4 +104,4 @@ class AnalysisService {
   }
 }
 
-export const analysisService = new AnalysisService();   
+export const analysisService = new AnalysisService();

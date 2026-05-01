@@ -1,8 +1,8 @@
 import { Request, Response } from "express";
-import { prisma } from "@algoforge/db";
 import { authCookies, env } from "../config/env";
 import { authService } from "../services/auth.service";
 import { userService } from "../services/user.service";
+import { adminService } from "../services/admin.service";
 import { AppError } from "../utils/app-error";
 import { asyncHandler } from "../utils/async-handler";
 import {
@@ -23,8 +23,8 @@ class AuthController {
 
   handleGoogleCallback = asyncHandler(async (req: Request, res: Response) => {
     try {
-      const state = ensureString(req.query.state, "OAuth state is missing.");
-      const code = ensureString(req.query.code, "Authorization code is missing.");
+      const state         = ensureString(req.query.state, "OAuth state is missing.");
+      const code          = ensureString(req.query.code, "Authorization code is missing.");
       const expectedState = getCookie(req, authCookies.oauthState);
 
       clearOAuthStateCookie(res);
@@ -93,17 +93,7 @@ class AuthController {
   });
 
   listUsers = asyncHandler(async (_req: Request, res: Response) => {
-    const users = await prisma.user.findMany({
-      orderBy: { createdAt: "desc" },
-      select: {
-        id: true,
-        email: true,
-        name: true,
-        role: true,
-        createdAt: true,
-      },
-    });
-
+    const users = await adminService.listAllUsers();
     res.json({ users });
   });
 }

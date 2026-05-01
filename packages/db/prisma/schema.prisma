@@ -30,9 +30,10 @@ model User {
   createdAt DateTime   @default(now()) @map("created_at")
   updatedAt DateTime   @updatedAt @map("updated_at")
 
-  accounts  Account[]
-  sessions  Session[]
-  analyses  Analysis[]
+  accounts            Account[]
+  sessions            Session[]
+  analyses            Analysis[]
+  explanationSessions ExplanationSession[]
 
   @@index([email])
   @@index([username])
@@ -89,6 +90,26 @@ model Analysis {
   @@map("analyses")
 }
 
+// Persistent AI explanation chat sessions.
+// Each session stores an ordered list of user/assistant messages as JSON.
+// Sessions can be shared publicly via a generated shareId.
+model ExplanationSession {
+  id        String   @id @default(cuid())
+  userId    String   @map("user_id")
+  title     String?                      // Auto-set from first message if not provided
+  shareId   String?  @unique @map("share_id")
+  isPublic  Boolean  @default(false)     @map("is_public")
+  messages  Json     @default("[]")      // Array of SessionMessage objects
+  createdAt DateTime @default(now())     @map("created_at")
+  updatedAt DateTime @updatedAt          @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([shareId])
+  @@map("explanation_sessions")
+}
+
 model Category {
   id          String      @id
   label       String
@@ -104,22 +125,20 @@ model Category {
   @@map("categories")
 }
 
-// Complexity was a separate one-to-one table — over-normalized.
-// Fields are inlined directly into algorithms to eliminate the join.
 model Algorithm {
-  id             String     @id @default(uuid())
-  slug           String     @unique
-  name           String
-  description    String
-  categoryId     String     @map("category_id")
-  difficulty     Difficulty @default(beginner)
-  isPublished    Boolean    @default(false) @map("is_published")
-  timeBest       String?    @map("time_best")
-  timeAverage    String?    @map("time_average")
-  timeWorst      String?    @map("time_worst")
-  spaceComplexity String?   @map("space_complexity")
-  createdAt      DateTime   @default(now()) @map("created_at")
-  updatedAt      DateTime   @updatedAt @map("updated_at")
+  id              String     @id @default(uuid())
+  slug            String     @unique
+  name            String
+  description     String
+  categoryId      String     @map("category_id")
+  difficulty      Difficulty @default(beginner)
+  isPublished     Boolean    @default(false) @map("is_published")
+  timeBest        String?    @map("time_best")
+  timeAverage     String?    @map("time_average")
+  timeWorst       String?    @map("time_worst")
+  spaceComplexity String?    @map("space_complexity")
+  createdAt       DateTime   @default(now()) @map("created_at")
+  updatedAt       DateTime   @updatedAt @map("updated_at")
 
   category     Category       @relation(fields: [categoryId], references: [id])
   displayCodes DisplayCode[]
@@ -133,8 +152,6 @@ model Algorithm {
   @@map("algorithms")
 }
 
-// One algorithm can have display code in multiple languages.
-// Uniqueness enforced on (algorithm_id, language).
 model DisplayCode {
   id          String @id @default(uuid())
   algorithmId String @map("algorithm_id")
@@ -148,7 +165,6 @@ model DisplayCode {
   @@map("display_codes")
 }
 
-// Stores forge JS code + metadata only. Never executed server-side.
 model ForgeConfig {
   id          String @id @default(uuid())
   algorithmId String @unique @map("algorithm_id")

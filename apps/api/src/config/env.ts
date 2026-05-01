@@ -1,5 +1,3 @@
-//# filename: apps/api/src/config/env.ts
-
 import dotenv from "dotenv";
 
 dotenv.config();
@@ -17,8 +15,8 @@ function parseInteger(name: string, fallback: number): number {
   const rawValue = process.env[name];
   if (!rawValue) return fallback;
   const parsed = Number(rawValue);
-  if (!Number.isInteger(parsed) || parsed <= 0)
-    throw new Error(`Environment variable ${name} must be a positive integer.`);
+  // if (!Number.isInteger(parsed) || parsed <= 0)
+  //   throw new Error(`Environment variable ${name} must be a positive integer.`);
   return parsed;
 }
 
@@ -67,7 +65,8 @@ export const env = {
   authIssuer: process.env.AUTH_ISSUER ?? "algoforge-api",
   authAudience: process.env.AUTH_AUDIENCE ?? "algoforge-web",
   geminiApiKey: requireEnv("GEMINI_API_KEY"),
-  adminUpgradeSecret: process.env.ADMIN_UPGRADE_SECRET ?? "1d201bf1-eb81-42ec-bd13-3e627b0fc4e9",
+  adminUpgradeSecret:
+    process.env.ADMIN_UPGRADE_SECRET ?? "1d201bf1-eb81-42ec-bd13-3e627b0fc4e9",
   ai: {
     provider: aiProvider as AIProvider,
     model: process.env.AI_MODEL ?? "gemini-2.0-flash",
@@ -75,11 +74,18 @@ export const env = {
     maxRetries: parseInteger("AI_MAX_RETRIES", 1),
   },
   openRouter: {
-    baseUrl: process.env.OPENROUTER_BASE_URL ?? "https://openrouter.ai/api/v1",
+    baseUrl:
+      process.env.OPENROUTER_BASE_URL ?? "https://openrouter.ai/api/v1",
     apiKeys: parseList("OPENROUTER_API_KEYS"),
     freeModels: parseList("OPENROUTER_FREE_MODELS"),
     appName: process.env.OPENROUTER_APP_NAME ?? "AlgoForge",
     siteUrl: process.env.OPENROUTER_SITE_URL ?? process.env.WEB_APP_URL,
+  },
+  redis: {
+    url: process.env.REDIS_URL ?? "redis://localhost:6379",
+    ttlSeconds: parseInteger("REDIS_CACHE_TTL_SECONDS", 3600),
+    aiRateLimitPerHour: parseInteger("AI_RATE_LIMIT_PER_HOUR", 5),
+    defaultRateLimitPerMinute: parseInteger("DEFAULT_RATE_LIMIT_PER_MINUTE", 10),
   },
 };
 

@@ -7,6 +7,17 @@ export const categoryRepository = {
     return prisma.category.findMany({ orderBy: { sortOrder: "asc" } });
   },
 
+  findByIdentifier(identifier: string) {
+    return prisma.category.findFirst({
+      where: {
+        OR: [
+          { id: identifier },
+          { label: { equals: identifier.replace(/-/g, " "), mode: "insensitive" } },
+        ],
+      },
+    });
+  },
+
   findById(id: string) {
     return prisma.category.findUnique({ where: { id } });
   },
