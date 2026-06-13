@@ -1,3 +1,6 @@
+import { prisma } from "@algoforge/db";
+import { layeredCache } from "../services/lib/Layered.cache";
+
 export type QueryScope = {
   intent: "explain_flow" | "explain_failure" | "explain_algorithm" | "explain_api" | "general";
   keywords: string[];
@@ -6,27 +9,37 @@ export type QueryScope = {
   rawQuery: string;
 };
 
-const KNOWN_SLUGS = [
-  "bubble-sort", "merge-sort", "quick-sort", "insertion-sort", "selection-sort",
-  "binary-search", "linear-search", "bfs", "dfs", "dijkstra", "a-star",
-  "heap-sort", "counting-sort", "radix-sort", "two-sum", "linked-list",
-];
-
 const ROUTE_KEYWORDS: Record<string, string[]> = {
-  "/api/auth": ["auth", "login", "logout", "session", "token", "refresh", "google", "oauth"],
-  "/api/analysis": ["analysis", "analyze", "ai", "code analysis"],
+  "/api/auth":       ["auth", "login", "logout", "session", "token", "refresh", "google", "oauth"],
+  "/api/analysis":   ["analysis", "analyze", "ai", "code analysis"],
   "/api/algorithms": ["algorithm", "visualize", "forge"],
   "/api/categories": ["category", "categories"],
-  "/api/share": ["share", "public", "shareId"],
-  "/api/explain": ["explain", "explanation"],
+  "/api/share":      ["share", "public", "shareId"],
+  "/api/explain":    ["explain", "explanation"],
 };
 
-export function processQuery(query: string): QueryScope {
+const SLUGS_CACHE_KEY = "meta:slugs";
+const SLUGS_CACHE_TTL = 300; // 5 minutes
+
+export async function getKnownSlugs(): Promise<string[]> {
+  const cached = await layeredCache.get<string[]>(SLUGS_CACHE_KEY);
+  if (cached) return cached;
+
+  const rows = await prisma.algorithm.findMany({
+    where:  { isPublished: true },
+    select: { slug: true },
+  });
+  const result = rows.map((r) => r.slug);
+  await layeredCache.set(SLUGS_CACHE_KEY, result, SLUGS_CACHE_TTL);
+  return result;
+}
+
+export async function processQuery(query: string): Promise<QueryScope> {
   const lower = query.toLowerCase();
 
-  const intent = detectIntent(lower);
-  const keywords = extractKeywords(lower);
-  const targetSlugs = matchSlugs(lower);
+  const intent       = detectIntent(lower);
+  const keywords     = extractKeywords(lower);
+  const targetSlugs  = await matchSlugs(lower);
   const targetRoutes = matchRoutes(lower);
 
   return {
@@ -66,8 +79,9 @@ function extractKeywords(query: string): string[] {
     .filter((w) => w.length > 2 && !stopWords.has(w));
 }
 
-function matchSlugs(query: string): string[] {
-  return KNOWN_SLUGS.filter((slug) => {
+async function matchSlugs(query: string): Promise<string[]> {
+  const knownSlugs = await getKnownSlugs();
+  return knownSlugs.filter((slug) => {
     const normalized = slug.replace(/-/g, " ");
     return query.includes(slug) || query.includes(normalized);
   });

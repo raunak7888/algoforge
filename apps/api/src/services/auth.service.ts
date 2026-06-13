@@ -45,11 +45,11 @@ class AuthService {
   buildGoogleAuthorizationUrl(): { url: string; state: string } {
     const state = randomToken(32);
     const url = googleClient.generateAuthUrl({
-      access_type:             "offline",
-      scope:                   googleOAuthConfig.scopes,
-      include_granted_scopes:  true,
+      access_type:            "offline",
+      scope:                  googleOAuthConfig.scopes,
+      include_granted_scopes: true,
       state,
-      prompt:                  "select_account",
+      prompt:                 "select_account",
     });
     return { url, state };
   }
@@ -123,8 +123,6 @@ class AuthService {
       throw AppError.unauthorized("Refresh token expired.");
     }
 
-    // Generate the next session id directly — no need to sign+verify just to
-    // extract back the same value we passed in.
     const nextSessionId    = randomToken(24);
     const nextRefreshToken = signRefreshToken({ sub: session.user.id, sessionId: nextSessionId });
 
@@ -133,16 +131,26 @@ class AuthService {
       session.userId,
       presentedHash,
       {
-        id:          nextSessionId,
-        tokenHash:   hashToken(nextRefreshToken),
-        expiresAt:   this.buildRefreshExpiry(),
-        lastUsedAt:  new Date(),
-        ipAddress:   metadata.ipAddress,
-        userAgent:   metadata.userAgent,
+        id:         nextSessionId,
+        tokenHash:  hashToken(nextRefreshToken),
+        expiresAt:  this.buildRefreshExpiry(),
+        lastUsedAt: new Date(),
+        ipAddress:  metadata.ipAddress,
+        userAgent:  metadata.userAgent,
       },
     );
 
     if (!rotated) {
+      // Distinguish a concurrent legitimate refresh from actual token theft.
+      // If a successor session (rotatedFromId = session.id) already exists,
+      // this was a race between two simultaneous refresh attempts — fail this
+      // request gracefully without nuking all sessions.
+      const successor = await sessionRepository.findRotatedFrom(session.id);
+      if (successor) {
+        throw AppError.unauthorized("Session already refreshed. Please retry.");
+      }
+
+      // No successor found — this looks like genuine token reuse after theft.
       await this.revokeAllUserSessions(session.userId);
       throw AppError.unauthorized("Refresh token reuse detected.");
     }
@@ -178,18 +186,17 @@ class AuthService {
     user: AuthenticatedUser,
     metadata: RequestMetadata,
   ): Promise<AuthResult> {
-    // Generate the session id directly — no round-trip sign+verify needed.
     const sessionId    = randomToken(24);
     const refreshToken = signRefreshToken({ sub: user.id, sessionId });
 
     await sessionRepository.create({
-      id:          sessionId,
-      userId:      user.id,
-      tokenHash:   hashToken(refreshToken),
-      expiresAt:   this.buildRefreshExpiry(),
-      lastUsedAt:  new Date(),
-      ipAddress:   metadata.ipAddress,
-      userAgent:   metadata.userAgent,
+      id:         sessionId,
+      userId:     user.id,
+      tokenHash:  hashToken(refreshToken),
+      expiresAt:  this.buildRefreshExpiry(),
+      lastUsedAt: new Date(),
+      ipAddress:  metadata.ipAddress,
+      userAgent:  metadata.userAgent,
     });
 
     const accessToken = signAccessToken({

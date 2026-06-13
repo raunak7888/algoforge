@@ -4,13 +4,10 @@ import { explanationSessionController } from "../controllers/explanation-session
 
 const router = Router();
 
-// Public analysis share
 router.get("/analysis/:shareId", analysisController.getPublicAnalysis);
+router.get("/explain/:shareId",  explanationSessionController.getPublic);
 
-// Legacy route kept for backward compatibility
+// Legacy wildcard MUST be last — it would otherwise intercept /explain/:shareId
 router.get("/:shareId", analysisController.getPublicAnalysis);
-
-// Public explanation session share
-router.get("/explain/:shareId", explanationSessionController.getPublic);
 
 export default router;

@@ -1,25 +1,23 @@
-//# filename: apps/api/src/repositories/session.repository.ts
-
 import { prisma } from "@algoforge/db";
 
 const userSelect = {
-  id: true,
-  email: true,
+  id:       true,
+  email:    true,
   username: true,
-  name: true,
-  image: true,
-  role: true,
+  name:     true,
+  image:    true,
+  role:     true,
 } as const;
 
 export const sessionRepository = {
   create(data: {
-    id: string;
-    userId: string;
-    tokenHash: string;
-    expiresAt: Date;
-    lastUsedAt: Date;
-    ipAddress: string | null;
-    userAgent: string | null;
+    id:            string;
+    userId:        string;
+    tokenHash:     string;
+    expiresAt:     Date;
+    lastUsedAt:    Date;
+    ipAddress:     string | null;
+    userAgent:     string | null;
     rotatedFromId?: string;
   }) {
     return prisma.session.create({ data });
@@ -28,41 +26,44 @@ export const sessionRepository = {
   findActiveById(sessionId: string, userId: string) {
     return prisma.session.findFirst({
       where: {
-        id: sessionId,
+        id:        sessionId,
         userId,
         revokedAt: null,
         expiresAt: { gt: new Date() },
       },
       select: {
-        id: true,
+        id:        true,
         expiresAt: true,
-        user: { select: userSelect },
+        user:      { select: userSelect },
       },
     });
   },
 
   findByIdWithUser(sessionId: string) {
     return prisma.session.findUnique({
-      where: { id: sessionId },
+      where:   { id: sessionId },
       include: { user: { select: userSelect } },
     });
   },
 
-  /**
-   * Atomically revokes the current session and creates a rotated replacement.
-   * Returns null if the session could not be exclusively revoked (reuse detected).
-   */
+  /** Find a session that was created by rotating the given session id. */
+  findRotatedFrom(originalId: string) {
+    return prisma.session.findFirst({
+      where: { rotatedFromId: originalId },
+    });
+  },
+
   async rotate(
-    currentId: string,
-    currentUserId: string,
+    currentId:      string,
+    currentUserId:  string,
     currentTokenHash: string,
     next: {
-      id: string;
-      tokenHash: string;
-      expiresAt: Date;
-      lastUsedAt: Date;
-      ipAddress: string | null;
-      userAgent: string | null;
+      id:          string;
+      tokenHash:   string;
+      expiresAt:   Date;
+      lastUsedAt:  Date;
+      ipAddress:   string | null;
+      userAgent:   string | null;
     },
   ) {
     const now = new Date();
@@ -70,8 +71,8 @@ export const sessionRepository = {
     return prisma.$transaction(async (tx) => {
       const revoked = await tx.session.updateMany({
         where: {
-          id: currentId,
-          userId: currentUserId,
+          id:        currentId,
+          userId:    currentUserId,
           tokenHash: currentTokenHash,
           revokedAt: null,
           expiresAt: { gt: now },
@@ -84,7 +85,7 @@ export const sessionRepository = {
       return tx.session.create({
         data: {
           ...next,
-          userId: currentUserId,
+          userId:        currentUserId,
           rotatedFromId: currentId,
         },
       });
@@ -94,14 +95,14 @@ export const sessionRepository = {
   revokeById(sessionId: string, userId?: string) {
     return prisma.session.updateMany({
       where: { id: sessionId, ...(userId ? { userId } : {}), revokedAt: null },
-      data: { revokedAt: new Date() },
+      data:  { revokedAt: new Date() },
     });
   },
 
   revokeAllForUser(userId: string) {
     return prisma.session.updateMany({
       where: { userId, revokedAt: null },
-      data: { revokedAt: new Date() },
+      data:  { revokedAt: new Date() },
     });
   },
 };

@@ -90,9 +90,6 @@ model Analysis {
   @@map("analyses")
 }
 
-// Persistent AI explanation chat sessions.
-// Each session stores an ordered list of user/assistant messages as JSON.
-// Sessions can be shared publicly via a generated shareId.
 model ExplanationSession {
   id        String   @id @default(cuid())
   userId    String   @map("user_id")

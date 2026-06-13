@@ -6,21 +6,19 @@ import { notFoundHandler } from "./middleware/not-found";
 import { securityHeaders } from "./middleware/security-headers";
 import { generalRateLimiter } from "./middleware/rate-limit";
 
-// ── Routers ───────────────────────────────────────────────────────────────────
 import adminRouter              from "./routes/admin";
 import algorithmRouter          from "./routes/algorithm";
 import analysisRouter           from "./routes/analysis";
 import authRouter               from "./routes/auth";
 import categoryRouter           from "./routes/category";
 import shareRouter              from "./routes/share";
-import explanationRouter        from "./routes/exaplantion";         // one-shot POST /api/explain
-import explanationSessionRouter from "./routes/explanation-session"; // persistent sessions
+import explanationRouter        from "./routes/exaplantion";
+import explanationSessionRouter from "./routes/explanation-session";
 
 const app = express();
 
 app.set("trust proxy", 1);
 
-// ── Global middleware ─────────────────────────────────────────────────────────
 app.use(securityHeaders);
 app.use(
   cors({
@@ -32,36 +30,23 @@ app.use(
 );
 app.use(express.json({ limit: "256kb" }));
 
-// ── Health ────────────────────────────────────────────────────────────────────
 app.get("/health", (_req, res) => {
   res.json({ status: "ok", timestamp: new Date().toISOString() });
 });
 
-// ── Auth ──────────────────────────────────────────────────────────────────────
 app.use("/api/auth", authRouter);
-
-// ── Algorithms + categories ───────────────────────────────────────────────────
 app.use("/api/algorithms", generalRateLimiter(), algorithmRouter);
 app.use("/api/categories", categoryRouter);
-
-// ── Analysis ──────────────────────────────────────────────────────────────────
 app.use("/api/analysis",  generalRateLimiter(), analysisRouter);
-app.use("/api/analyses",  generalRateLimiter(), analysisRouter); // alias
+app.use("/api/analyses",  generalRateLimiter(), analysisRouter);
 
-// ── AI explain ────────────────────────────────────────────────────────────────
-// IMPORTANT: sessions route MUST be registered before the generic explain route.
-// Express does prefix matching with app.use, so the more-specific path must
-// come first to prevent the generic router from intercepting session requests.
-app.use("/api/explain/sessions", explanationSessionRouter); // persistent chat CRUD
-app.use("/api/explain",          explanationRouter);         // one-shot stateless
+// Sessions mounted at a path that cannot be prefix-matched by the explain router.
+app.use("/api/explain-sessions", explanationSessionRouter);
+app.use("/api/explain",          explanationRouter);
 
-// ── Public share ──────────────────────────────────────────────────────────────
 app.use("/api/share", shareRouter);
-
-// ── Admin ─────────────────────────────────────────────────────────────────────
 app.use("/api/admin", adminRouter);
 
-// ── Fallthrough ───────────────────────────────────────────────────────────────
 app.use(notFoundHandler);
 app.use(errorHandler);
 

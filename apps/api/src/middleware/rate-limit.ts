@@ -11,11 +11,6 @@ function getClientIp(req: Request): string {
   return req.ip ?? "unknown";
 }
 
-/**
- * Atomic fixed-window counter via Lua script.
- * Guarantees INCR + EXPIRE happen as a single Redis operation.
- * Used for AI endpoint: N requests per hour per IP.
- */
 const FIXED_WINDOW_SCRIPT = `
 local current = redis.call('INCR', KEYS[1])
 if current == 1 then
@@ -24,12 +19,12 @@ end
 return current
 `;
 
-export function aiRateLimiter() {
+export function aiRateLimiter(feature: "explain" | "session") {
   return async (req: Request, _res: Response, next: NextFunction): Promise<void> => {
     const ip = getClientIp(req);
     const windowSeconds = 3600;
     const windowSlot = Math.floor(Date.now() / (windowSeconds * 1000));
-    const key = `rl:ai:${ip}:${windowSlot}`;
+    const key = `rl:ai:${feature}:${ip}:${windowSlot}`;
     const limit = env.redis.aiRateLimitPerHour;
 
     try {
@@ -57,17 +52,12 @@ export function aiRateLimiter() {
         next(err);
         return;
       }
-      // Redis failure → fail open (do not block the request)
+      console.error(`[RateLimit][AI:${feature}] Redis error — failing open:`, err);
       next();
     }
   };
 }
 
-/**
- * Atomic sliding-window counter via Lua script.
- * Removes stale entries and checks count in a single atomic operation.
- * Used for general endpoints: N requests per minute per IP.
- */
 const SLIDING_WINDOW_SCRIPT = `
 local key = KEYS[1]
 local now = tonumber(ARGV[1])
@@ -88,7 +78,6 @@ export function generalRateLimiter() {
     const limit = env.redis.defaultRateLimitPerMinute;
     const key = `rl:general:${ip}`;
     const now = Date.now();
-    // Unique member: timestamp + counter avoids member collisions under high concurrency
     const member = `${now}:${process.hrtime.bigint().toString()}`;
 
     try {
@@ -118,8 +107,8 @@ export function generalRateLimiter() {
         next(err);
         return;
       }
-      // Redis failure → fail open
+      console.error("[RateLimit] Redis error — failing open:", err);
       next();
     }
   };
-}
+} 

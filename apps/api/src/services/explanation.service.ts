@@ -1,7 +1,4 @@
-/**
- * One-shot explanation endpoint (stateless).
- * For persistent chat sessions use ExplanationSessionService.
- */
+import { createHash } from "crypto";
 import { aiService } from "./ai.service";
 import { buildCodebaseContext, serializeContext } from "../ai/context-builder";
 import { processQuery, type QueryScope } from "../ai/query-processor";
@@ -11,23 +8,30 @@ import { AppError } from "../utils/app-error";
 import { layeredCache } from "./lib/Layered.cache";
 
 const EXPLAIN_CACHE_PREFIX = "ai:explain:";
+const MAX_QUERY_LENGTH = 2000;
 
 class ExplanationService {
   async explain(query: string): Promise<ExplanationResponse> {
-    if (query.trim().length < 5) {
+    const trimmed = query.trim();
+
+    if (trimmed.length < 5) {
       throw AppError.badRequest("Query must be at least 5 characters.");
     }
 
-    const cacheKey = EXPLAIN_CACHE_PREFIX + query.trim().toLowerCase();
+    if (trimmed.length > MAX_QUERY_LENGTH) {
+      throw AppError.badRequest(`Query cannot exceed ${MAX_QUERY_LENGTH} characters.`);
+    }
 
-    // Check layered cache (L1 LRU → L2 Redis)
+    const cacheKey =
+      EXPLAIN_CACHE_PREFIX +
+      createHash("sha256").update(trimmed.toLowerCase()).digest("hex").slice(0, 32);
+
     const cached = await layeredCache.get<ExplanationResponse>(cacheKey);
     if (cached) {
       return { ...cached, cachedAt: new Date().toISOString() };
     }
 
-    // Full AI pipeline
-    const scope       = processQuery(query);
+    const scope       = await processQuery(trimmed);
     const context     = await buildCodebaseContext(scope.targetSlugs);
     const contextText = serializeContext(context);
     const prompt      = buildExplanationPrompt(contextText, scope);

@@ -1,7 +1,3 @@
-/**
- * Create, update, and delete algorithms.
- * Every mutation invalidates all related cache entries atomically.
- */
 import { Prisma, Difficulty } from "@algoforge/db";
 import {
   ForgeCodeSchema,
@@ -16,16 +12,12 @@ import { algorithmCacheKeys } from "./cache-keys";
 import { AppError } from "../../utils/app-error";
 import { layeredCache } from "../lib/Layered.cache";
 
-// ─── Types ────────────────────────────────────────────────────────────────────
-
 type ExistingForge = {
   forgeCode:   Prisma.JsonValue;
   inputSchema: Prisma.JsonValue;
   guardRanges: Prisma.JsonValue;
   version:     number;
 } | null;
-
-// ─── Public API ───────────────────────────────────────────────────────────────
 
 export async function createAlgorithm(input: CreateAlgorithm) {
   if (input.forge) validateForge(input.forge);
@@ -39,7 +31,6 @@ export async function updateAlgorithm(id: string, input: UpdateAlgorithm) {
 
   if (input.forge) {
     validateForge(input.forge);
-    // When no forge config exists yet, all three fields are required to create one.
     if (!existing.forge) {
       if (!input.forge.forgeCode || !input.forge.inputSchema || !input.forge.guardRanges) {
         throw AppError.badRequest(
@@ -69,17 +60,15 @@ export async function deleteAlgorithm(id: string): Promise<void> {
   await bustCache(id, existing.slug);
 }
 
-// ─── Private ──────────────────────────────────────────────────────────────────
-
 async function bustCache(id: string, slug: string): Promise<void> {
   await Promise.all([
     layeredCache.del(algorithmCacheKeys.byId(id)),
     layeredCache.del(algorithmCacheKeys.bySlug(slug)),
     layeredCache.del(algorithmCacheKeys.viz(id)),
+    layeredCache.del("meta:slugs"),
   ]);
 }
 
-/** Throws 400 if any forge sub-schema fails Zod validation. */
 function validateForge(
   forge: { forgeCode?: unknown; guardRanges?: unknown; inputSchema?: unknown },
 ): void {
@@ -120,15 +109,6 @@ function toCreateData(input: CreateAlgorithm, categoryId: string) {
   };
 }
 
-/**
- * Builds the Prisma update payload.
- *
- * For forge:
- *   - If existingForge is null, we know all three forge fields are present
- *     (validated in updateAlgorithm before this is called), so we use `create`.
- *   - If existingForge exists, we only update the fields that were provided
- *     (partial update), using `update`.
- */
 function toUpdateData(
   input: UpdateAlgorithm,
   existingForge: ExistingForge,
@@ -161,7 +141,6 @@ function buildForgeWrite(
   existingForge: ExistingForge,
 ): Pick<Prisma.AlgorithmUpdateInput, "forge"> {
   if (!existingForge) {
-    // All three fields are guaranteed present — validated upstream.
     return {
       forge: {
         create: {
@@ -174,7 +153,6 @@ function buildForgeWrite(
     };
   }
 
-  // Partial update — only touch fields that were provided in the request.
   return {
     forge: {
       update: {
