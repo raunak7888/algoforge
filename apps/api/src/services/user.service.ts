@@ -1,25 +1,18 @@
-import { prisma } from "@algoforge/db";
+//# filename: apps/api/src/services/user.service.ts
+
 import { type SafeUser } from "@algoforge/analysis";
+import { userRepository } from "../repositories/user.repository";
 import { verifyAccessToken } from "../utils/token";
+import { sessionRepository } from "../repositories/session.repository";
 
 class UserService {
   async getUserById(userId: string): Promise<SafeUser | null> {
-    const user = await (prisma.user.findUnique as any)({
-      where: { id: userId },
-      select: {
-        id: true,
-        name: true,
-        username: true,
-        image: true,
-      },
-    });
-
+    const user = await userRepository.findPublicById(userId);
     if (!user) return null;
-
     return {
       id: user.id,
       name: user.name,
-      username: user.username || user.name,
+      username: user.username ?? user.name,
       avatarUrl: user.image,
     };
   }
@@ -27,21 +20,13 @@ class UserService {
   async getUserByToken(token: string): Promise<SafeUser | null> {
     try {
       const payload = verifyAccessToken(token);
-      
-      // Also verify session exists and is active
-      const session = await prisma.session.findFirst({
-        where: {
-          id: payload.sessionId,
-          userId: payload.sub,
-          revokedAt: null,
-          expiresAt: { gt: new Date() },
-        },
-      });
-
+      const session = await sessionRepository.findActiveById(
+        payload.sessionId,
+        payload.sub,
+      );
       if (!session) return null;
-
       return this.getUserById(payload.sub);
-    } catch (error) {
+    } catch {
       return null;
     }
   }

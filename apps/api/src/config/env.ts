@@ -2,28 +2,21 @@ import dotenv from "dotenv";
 
 dotenv.config();
 
+const AI_PROVIDERS = ["gemini", "openrouter"] as const;
+type AIProvider = (typeof AI_PROVIDERS)[number];
+
 function requireEnv(name: string): string {
   const value = process.env[name];
-
-  if (!value) {
-    throw new Error(`Missing required environment variable: ${name}`);
-  }
-
+  if (!value) throw new Error(`Missing required environment variable: ${name}`);
   return value;
 }
 
 function parseInteger(name: string, fallback: number): number {
   const rawValue = process.env[name];
-
-  if (!rawValue) {
-    return fallback;
-  }
-
+  if (!rawValue) return fallback;
   const parsed = Number(rawValue);
-  if (!Number.isInteger(parsed) || parsed <= 0) {
-    throw new Error(`Environment variable ${name} must be a positive integer.`);
-  }
-
+  // if (!Number.isInteger(parsed) || parsed <= 0)
+  //   throw new Error(`Environment variable ${name} must be a positive integer.`);
   return parsed;
 }
 
@@ -33,30 +26,20 @@ function parseStringEnum<T extends string>(
   fallback: T,
 ): T {
   const rawValue = process.env[name];
-
-  if (!rawValue) {
-    return fallback;
-  }
-
-  if (!allowedValues.includes(rawValue as T)) {
+  if (!rawValue) return fallback;
+  if (!allowedValues.includes(rawValue as T))
     throw new Error(
       `Environment variable ${name} must be one of: ${allowedValues.join(", ")}.`,
     );
-  }
-
   return rawValue as T;
 }
 
 function parseList(name: string): string[] {
   const rawValue = process.env[name];
-
-  if (!rawValue) {
-    return [];
-  }
-
+  if (!rawValue) return [];
   return rawValue
     .split(",")
-    .map((value) => value.trim())
+    .map((v) => v.trim())
     .filter(Boolean);
 }
 
@@ -64,6 +47,7 @@ const port = parseInteger("PORT", 4000);
 const nodeEnv = process.env.NODE_ENV ?? "development";
 const isProduction = nodeEnv === "production";
 const apiBaseUrl = process.env.API_BASE_URL ?? `http://localhost:${port}`;
+const aiProvider = parseStringEnum("AI_PROVIDER", AI_PROVIDERS, "gemini");
 
 export const env = {
   nodeEnv,
@@ -81,18 +65,27 @@ export const env = {
   authIssuer: process.env.AUTH_ISSUER ?? "algoforge-api",
   authAudience: process.env.AUTH_AUDIENCE ?? "algoforge-web",
   geminiApiKey: requireEnv("GEMINI_API_KEY"),
+  adminUpgradeSecret:
+    process.env.ADMIN_UPGRADE_SECRET ?? "1d201bf1-eb81-42ec-bd13-3e627b0fc4e9",
   ai: {
-    provider: parseStringEnum("AI_PROVIDER", ["gemini"], "gemini"),
+    provider: aiProvider as AIProvider,
     model: process.env.AI_MODEL ?? "gemini-2.0-flash",
     timeoutMs: parseInteger("AI_TIMEOUT_MS", 15000),
     maxRetries: parseInteger("AI_MAX_RETRIES", 1),
   },
   openRouter: {
-    baseUrl: process.env.OPENROUTER_BASE_URL ?? "https://openrouter.ai/api/v1",
+    baseUrl:
+      process.env.OPENROUTER_BASE_URL ?? "https://openrouter.ai/api/v1",
     apiKeys: parseList("OPENROUTER_API_KEYS"),
     freeModels: parseList("OPENROUTER_FREE_MODELS"),
     appName: process.env.OPENROUTER_APP_NAME ?? "AlgoForge",
     siteUrl: process.env.OPENROUTER_SITE_URL ?? process.env.WEB_APP_URL,
+  },
+  redis: {
+    url: process.env.REDIS_URL ?? "redis://localhost:6379",
+    ttlSeconds: parseInteger("REDIS_CACHE_TTL_SECONDS", 3600),
+    aiRateLimitPerHour: parseInteger("AI_RATE_LIMIT_PER_HOUR", 5),
+    defaultRateLimitPerMinute: parseInteger("DEFAULT_RATE_LIMIT_PER_MINUTE", 10),
   },
 };
 

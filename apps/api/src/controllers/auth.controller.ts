@@ -1,8 +1,8 @@
 import { Request, Response } from "express";
-import { prisma } from "@algoforge/db";
 import { authCookies, env } from "../config/env";
 import { authService } from "../services/auth.service";
 import { userService } from "../services/user.service";
+import { adminService } from "../services/admin.service";
 import { AppError } from "../utils/app-error";
 import { asyncHandler } from "../utils/async-handler";
 import {
@@ -12,7 +12,6 @@ import {
   setAuthCookies,
   setOAuthStateCookie,
 } from "../utils/cookies";
-import { getToken } from "../middleware/auth";
 import { ensureString } from "../validation/common";
 
 class AuthController {
@@ -24,8 +23,8 @@ class AuthController {
 
   handleGoogleCallback = asyncHandler(async (req: Request, res: Response) => {
     try {
-      const state = ensureString(req.query.state, "OAuth state is missing.");
-      const code = ensureString(req.query.code, "Authorization code is missing.");
+      const state         = ensureString(req.query.state, "OAuth state is missing.");
+      const code          = ensureString(req.query.code, "Authorization code is missing.");
       const expectedState = getCookie(req, authCookies.oauthState);
 
       clearOAuthStateCookie(res);
@@ -49,8 +48,14 @@ class AuthController {
     }
   });
 
-  getSession = asyncHandler(async (req: Request, res: Response) => {
-    res.json({ user: req.auth!.user });
+  getMe = asyncHandler(async (req: Request, res: Response) => {
+    const user = await userService.getUserById(req.auth!.user.id);
+
+    if (!user) {
+      throw AppError.notFound("User not found.");
+    }
+
+    res.json({ user });
   });
 
   refreshSession = asyncHandler(async (req: Request, res: Response) => {
@@ -88,30 +93,8 @@ class AuthController {
   });
 
   listUsers = asyncHandler(async (_req: Request, res: Response) => {
-    const users = await prisma.user.findMany({
-      orderBy: { createdAt: "desc" },
-      select: {
-        id: true,
-        email: true,
-        name: true,
-        role: true,
-        createdAt: true,
-      },
-    });
-
+    const users = await adminService.listAllUsers();
     res.json({ users });
-  });
-
-  getMe = asyncHandler(async (req: Request, res: Response) => {
-    const accessToken = getToken(req);
-    
-    if (!accessToken) {
-      res.json({ user: null });
-      return;
-    }
-
-    const user = await userService.getUserByToken(accessToken);
-    res.json({ user });
   });
 }
 

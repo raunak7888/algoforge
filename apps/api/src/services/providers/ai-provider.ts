@@ -8,6 +8,7 @@ export type AIMessage = {
 
 export type AIGenerateRequest = {
   messages: AIMessage[];
+  responseFormat?: "json" | "text";
 };
 
 export type AIGenerateResponse = {

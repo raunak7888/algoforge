@@ -1,0 +1,9 @@
+{
+    "name": "@algoforge/forge",
+    "version": "1.0.0",
+    "private": true,
+    "main": "./src/index.ts",
+    "dependencies": {
+        "zod": "^4.3.6"
+    }
+}

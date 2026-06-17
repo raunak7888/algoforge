@@ -1,10 +1,13 @@
-import { AnalysisResultSchema, type AnalysisLanguage, type AnalysisResult } from "@algoforge/analysis";
+import {
+  AnalysisResultSchema,
+  type AnalysisLanguage,
+  type AnalysisResult,
+} from "@algoforge/analysis";
 import { env } from "../config/env";
 import { buildAnalysisPrompt } from "../prompts/analysis.prompt";
 import { AppError } from "../utils/app-error";
+import { getAIProvider } from "./providers/provider-factory";
 import type { AIMessage } from "./providers/ai-provider";
-import type { AIProvider } from "./providers/ai-provider";
-import { GeminiProvider } from "./providers/gemini.provider";
 
 type AnalyzeCodeInput = {
   code: string;
@@ -12,112 +15,71 @@ type AnalyzeCodeInput = {
 };
 
 class AIService {
-  constructor(private readonly provider: AIProvider) {}
-
   async analyzeCode(input: AnalyzeCodeInput): Promise<AnalysisResult> {
     const prompt = buildAnalysisPrompt(input);
-    const messages: AIMessage[] = [
-      {
-        role: "user",
-        content: prompt,
-      },
-    ];
-    this.logInfo(`Using provider "${this.provider.name}" for analysis.`);
+    const raw = await this.generate(
+      [{ role: "user", content: prompt }],
+      "json",
+    );
+    const sanitized = sanitizeJson(raw);
 
     try {
-      const response = await this.withTimeout(
-        this.provider.generate({ messages }),
+      const parsed = JSON.parse(sanitized) as unknown;
+      return AnalysisResultSchema.parse(parsed);
+    } catch (error) {
+      if (error instanceof SyntaxError) {
+        throw AppError.badGateway("AI provider returned invalid JSON.");
+      }
+      throw AppError.badGateway("AI provider returned an invalid analysis payload.");
+    }
+  }
+
+  async generateText(messages: AIMessage[]): Promise<string> {
+    return this.generate(messages, "text");
+  }
+
+  private async generate(
+    messages: AIMessage[],
+    responseFormat: "json" | "text",
+  ): Promise<string> {
+    const provider = getAIProvider();
+
+    try {
+      const response = await withTimeout(
+        provider.generate({ messages, responseFormat }),
         env.ai.timeoutMs,
       );
-      const sanitizedResponse = sanitizeAiJson(response.message.content);
-      const parsedResponse = JSON.parse(sanitizedResponse) as unknown;
-
-      this.logInfo(
-        `Provider "${this.provider.name}" succeeded with model "${response.model}".`,
-      );
-
-      return AnalysisResultSchema.parse(parsedResponse);
+      return response.message.content;
     } catch (error) {
-      this.logError(`Provider "${this.provider.name}" failed.`, error);
-      throw this.normalizeError(error);
-    }
-  }
-
-  private async withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
-    let timeoutId: NodeJS.Timeout | undefined;
-
-    try {
-      return await Promise.race([
-        promise,
-        new Promise<T>((_, reject) => {
-          timeoutId = setTimeout(() => {
-            reject(AppError.badGateway("AI provider request timed out."));
-          }, timeoutMs);
-        }),
-      ]);
-    } finally {
-      if (timeoutId) {
-        clearTimeout(timeoutId);
-      }
-    }
-  }
-
-  private normalizeError(error: unknown): AppError {
-    if (error instanceof AppError) {
-      return error;
-    }
-
-    if (error instanceof SyntaxError) {
-      return AppError.badGateway("AI provider returned invalid JSON.");
-    }
-
-    if (
-      error instanceof Error &&
-      "issues" in error &&
-      Array.isArray((error as { issues?: unknown[] }).issues)
-    ) {
-      return AppError.badGateway("AI provider returned an invalid analysis payload.");
-    }
-
-    return AppError.badGateway("AI analysis failed.");
-  }
-
-  private logInfo(message: string): void {
-    if (!env.isProduction) {
-      console.info(`[AI] ${message}`);
-    }
-  }
-
-  private logError(message: string, error: unknown): void {
-    if (!env.isProduction) {
-      console.error(`[AI] ${message}`, error);
+      if (error instanceof AppError) throw error;
+      throw AppError.badGateway("AI request failed.");
     }
   }
 }
 
-function sanitizeAiJson(value: string): string {
+function sanitizeJson(value: string): string {
   const trimmed = value.trim();
-  const fencedMatch = trimmed.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+  const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+  if (fenced?.[1]) return fenced[1].trim();
 
-  if (fencedMatch?.[1]) {
-    return fencedMatch[1].trim();
-  }
-
-  const startIndex = trimmed.indexOf("{");
-  const endIndex = trimmed.lastIndexOf("}");
-
-  if (startIndex >= 0 && endIndex > startIndex) {
-    return trimmed.slice(startIndex, endIndex + 1).trim();
-  }
+  const start = trimmed.indexOf("{");
+  const end = trimmed.lastIndexOf("}");
+  if (start >= 0 && end > start) return trimmed.slice(start, end + 1).trim();
 
   return trimmed;
 }
 
-function createGeminiProvider(): AIProvider {
-  return new GeminiProvider({
-    apiKey: env.geminiApiKey,
-    model: env.ai.model,
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(AppError.badGateway("AI provider request timed out.")),
+      ms,
+    );
+    promise.then(
+      (v) => { clearTimeout(timer); resolve(v); },
+      (e) => { clearTimeout(timer); reject(e); },
+    );
   });
 }
 
-export const aiService = new AIService(createGeminiProvider());
+export const aiService = new AIService();

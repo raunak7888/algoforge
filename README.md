@@ -1,53 +1,129 @@
-# AlgoForge ⚡
+# AlgoForge
 
-Algorithm complexity analyzer — tracer bullet monorepo.
+> Visualize algorithms step-by-step, understand what's happening under the hood, and optimize performance with clarity — not guesswork.
 
-## Stack
-
-- **Frontend** — Next.js 14 + TypeScript (`apps/web`, port 3000)
-- **Backend** — Express + TypeScript (`apps/api`, port 4000)
-- **Database** — PostgreSQL via Docker
-- **ORM** — Prisma (`packages/db`)
-- **Monorepo** — pnpm workspaces
+![Next.js](https://img.shields.io/badge/Next.js-15-black?style=flat-square&logo=next.js)
+![TypeScript](https://img.shields.io/badge/TypeScript-5-blue?style=flat-square&logo=typescript)
+![Zustand](https://img.shields.io/badge/Zustand-immer-orange?style=flat-square)
+![GSAP](https://img.shields.io/badge/GSAP-Animation-green?style=flat-square)
 
 ---
 
-## Prerequisites
+## Screenshots
 
-- Node.js v18+
-- pnpm (`npm install -g pnpm`)
-- Docker + Docker Compose
+**Landing Page**
+
+![Landing Page](./images/image1.png)
+
+**Google OAuth — Sign In**
+
+![Auth](./images/image2.png)
+
+**Algorithm Analyzer — Binary Search**
+
+![Analyzer](./images/image3.png)
 
 ---
 
-## One-Time Setup
+## What is AlgoForge?
 
-```bash
-# 1. Clone / enter the project
-cd algoforge
+AlgoForge is an algorithm analysis and visualization platform. Paste or write code in the editor, and AlgoForge gives you:
 
-# 2. Run the setup script (starts DB, installs deps, migrates schema)
-bash setup.sh
+- A plain-English **summary** of what the algorithm does
+- A **readability score** (0–100 gauge)
+- **Best / Worst / Average / Space complexity** breakdown
+- **Time and space complexity charts** rendered as growth curves
+- A step-by-step **breakdown** of the algorithm's logic
+- Detected **bottlenecks** and **anti-patterns**
+
+Supports JavaScript and Python. Auth via Google OAuth 2.0.
+
+---
+
+## Architecture
+
+```mermaid
+flowchart TD
+    A[User pastes code in Editor] --> B[Language Detection JS / Python]
+    B --> C[AI Analysis Engine]
+    C --> D1[Summary + Tags]
+    C --> D2[Complexity: Best / Avg / Worst / Space]
+    C --> D3[Readability Score]
+    C --> D4[Step-by-step Breakdown]
+    C --> D5[Bottlenecks + Anti-patterns]
+    D1 & D2 & D3 & D4 & D5 --> E[Dashboard Render]
+    E --> F1[Complexity Growth Charts]
+    E --> F2[Gauge Meter]
+    E --> F3[Breakdown Panel]
 ```
 
-That's it. The script:
-1. Starts PostgreSQL in Docker
-2. Installs all workspace deps via pnpm
-3. Generates Prisma client
-4. Runs DB migration (creates tables)
+---
+
+## Feature Breakdown
+
+### Code Editor
+- Monaco-based editor with syntax highlighting
+- Supports JavaScript and Python
+- Editable and read-only modes
+- LSP-style status bar (language, encoding, spaces)
+
+### AI Algorithm Analyzer
+- Generates a plain-English summary of the algorithm
+- Tags the algorithm (`#binary-search`, `#divide-and-conquer`, `#iterative`, etc.)
+- Outputs complexity in four dimensions: Best, Worst, Average, Space
+
+### Complexity Visualizer
+- Plots Best / Average / Worst time complexity as growth curves (O(1), O(log n), O(n), O(n²), etc.)
+- Separate space complexity chart
+- Custom-built chart renderer — no Chart.js dependency
+
+### Readability Gauge
+- Scores code readability 0–100 using a dial/gauge meter
+- Score is derived from variable naming, nesting depth, control flow clarity
+
+### Step-by-step Breakdown
+- Decomposes the algorithm into numbered logical steps
+- Highlights the core invariant / loop condition in italics
+- Shows bottlenecks (e.g. "No pre-sort guard") and anti-patterns with warning indicators
+
+### Google OAuth 2.0
+- Sign-in modal with Google provider
+- Session-based workspace persistence
 
 ---
 
-## Run the Project
+## Tech Stack
 
-```bash
-pnpm dev
+| Layer | Tech |
+|---|---|
+| Framework | Next.js 15 (App Router) |
+| Language | TypeScript |
+| State Management | Zustand + Immer |
+| Animation | GSAP |
+| Styling | Tailwind CSS |
+| Auth | Google OAuth 2.0 |
+| Editor | Monaco Editor |
+
+---
+
+## Analysis Flow
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant Editor
+    participant Analyzer
+    participant Store
+    participant Dashboard
+
+    User->>Editor: Paste algorithm code
+    User->>Editor: Select language (JS / Python)
+    Editor->>Analyzer: Submit code + language
+    Analyzer->>Analyzer: Parse + analyze via AI engine
+    Analyzer->>Store: Write summary, complexity, score, breakdown
+    Store->>Dashboard: Re-render all panels
+    Dashboard->>User: Summary, charts, gauge, breakdown, anti-patterns
 ```
-
-Opens:
-- Frontend → http://localhost:3000
-- Backend  → http://localhost:4000
-- Health   → http://localhost:4000/health
 
 ---
 
@@ -55,96 +131,70 @@ Opens:
 
 ```
 algoforge/
-├── apps/
-│   ├── api/                  # Express backend
-│   │   └── src/
-│   │       ├── routes/
-│   │       │   └── analysis.ts   # POST /analysis, GET /analysis
-│   │       ├── app.ts            # Express app + middleware
-│   │       └── server.ts         # HTTP server entry
-│   └── web/                  # Next.js frontend
-│       └── src/
-│           ├── app/
-│           │   ├── layout.tsx
-│           │   └── page.tsx      # Main page
-│           └── components/
-│               ├── AnalysisForm.tsx    # Code input + language selector
-│               └── AnalysisResult.tsx # Result display
-├── packages/
-│   └── db/                   # Prisma ORM
-│       ├── prisma/
-│       │   └── schema.prisma     # User + Analysis models
-│       └── src/
-│           └── index.ts          # PrismaClient singleton
-├── docker-compose.yml        # PostgreSQL
-├── package.json              # Root workspace
-├── pnpm-workspace.yaml
-└── setup.sh                  # One-time setup script
+├── app/
+│   ├── page.tsx                  # Landing page
+│   ├── dashboard/
+│   │   └── page.tsx              # Main analyzer workspace
+│   └── layout.tsx
+├── components/
+│   ├── editor/
+│   │   └── CodeEditor.tsx        # Monaco editor wrapper
+│   ├── analyzer/
+│   │   ├── SummaryPanel.tsx      # Summary + tags
+│   │   ├── ComplexityPanel.tsx   # Best/Worst/Avg/Space cards
+│   │   ├── ReadabilityGauge.tsx  # Dial gauge component
+│   │   ├── TimeComplexityChart.tsx
+│   │   ├── SpaceComplexityChart.tsx
+│   │   ├── BreakdownPanel.tsx    # Step-by-step logic
+│   │   ├── BottlenecksPanel.tsx
+│   │   └── AntiPatternsPanel.tsx
+│   └── auth/
+│       └── SignInModal.tsx        # Google OAuth modal
+├── store/
+│   └── analyzerStore.ts           # Zustand + Immer store
+├── lib/
+│   └── analyzeCode.ts             # AI analysis orchestration
+└── images/
+    ├── Screenshot_2026-06-18_031407.png
+    ├── Screenshot_2026-06-18_031347.png
+    └── Screenshot_2026-06-18_031314.png
 ```
 
 ---
 
-## API Reference
-
-### POST /analysis
-
-**Request:**
-```json
-{
-  "code": "def binary_search(arr, x):\n    ...",
-  "language": "python"
-}
-```
-
-**Response (201):**
-```json
-{
-  "id": "clxyz...",
-  "language": "python",
-  "complexity": "O(n log n)",
-  "suggestion": "Consider using list comprehensions for better performance.",
-  "timeEstimate": "42ms",
-  "createdAt": "2024-01-01T00:00:00.000Z"
-}
-```
-
-**Supported languages:** python, javascript, typescript, java, cpp, go, rust
-
-### GET /analysis
-
-Returns last 10 analyses from the database. Used to verify persistence.
-
----
-
-## DB Management
+## Running Locally
 
 ```bash
-# Open Prisma Studio (DB GUI)
-pnpm db:studio
+git clone https://github.com/raunakyadav/algoforge
+cd algoforge
+npm install
+npm run dev
+```
 
-# Re-run migrations (after schema changes)
-pnpm db:migrate
+Open [http://localhost:3000](http://localhost:3000).
 
-# Regenerate Prisma client (after schema changes)
-pnpm db:generate
+Set up environment variables:
+
+```env
+GOOGLE_CLIENT_ID=your_google_client_id
+GOOGLE_CLIENT_SECRET=your_google_client_secret
+NEXTAUTH_SECRET=your_nextauth_secret
+NEXTAUTH_URL=http://localhost:3000
 ```
 
 ---
 
-## End-to-End Test (curl)
+## Roadmap
 
-```bash
-curl -X POST http://localhost:4000/analysis \
-  -H "Content-Type: application/json" \
-  -d '{"code": "for i in range(n):\n  for j in range(n):\n    print(i,j)", "language": "python"}'
-```
+- [ ] Binary Search Tree animator with step-by-step traversal
+- [ ] Graph BFS / DFS visualizer
+- [ ] Side-by-side algorithm comparison mode
+- [ ] Export analysis report as PDF
+- [ ] User history — save and revisit past analyses
 
 ---
 
-## Verify DB Persistence
+## Author
 
-```bash
-curl http://localhost:4000/analysis
-```
-
-Should return the stored record.
+**Raunak Yadav** — Full-Stack & DevOps Engineer  
+[GitHub](https://github.com/raunakyadav) · [Portfolio](https://raunakyadav.dev) · [LinkedIn](https://linkedin.com/in/raunakyadav)

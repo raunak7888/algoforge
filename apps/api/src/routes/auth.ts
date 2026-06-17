@@ -8,11 +8,15 @@ const router = Router();
 
 router.get("/google/start", authController.startGoogleAuth);
 router.get("/google/callback", authController.handleGoogleCallback);
-router.get("/me", authController.getMe);
-router.get("/session", requireAuth, authController.getSession);
-router.post("/refresh", requireCsrf, authController.refreshSession);
+router.get("/me", requireAuth, authController.getMe);
+router.post("/refresh", authController.refreshSession);
 router.post("/logout", requireCsrf, authController.logout);
 router.post("/logout-all", requireAuth, requireCsrf, authController.logoutAll);
-router.get("/admin/users", requireAuth, requireRoles(Role.ADMIN), authController.listUsers);
+router.get(
+  "/admin/users",
+  requireAuth,
+  requireRoles(Role.ADMIN),
+  authController.listUsers,
+);
 
 export default router;

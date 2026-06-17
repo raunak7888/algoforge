@@ -1,7 +1,11 @@
 import { GoogleGenAI } from "@google/genai";
 import { env } from "../../config/env";
 import { AppError } from "../../utils/app-error";
-import type { AIGenerateRequest, AIGenerateResponse, AIProvider } from "./ai-provider";
+import type {
+  AIGenerateRequest,
+  AIGenerateResponse,
+  AIProvider,
+} from "./ai-provider";
 
 export class GeminiProvider implements AIProvider {
   readonly name = "gemini";
@@ -16,32 +20,29 @@ export class GeminiProvider implements AIProvider {
     if (!config.apiKey) {
       throw AppError.internal("Missing Gemini API key.");
     }
-
     this.client = new GoogleGenAI({ apiKey: config.apiKey });
   }
 
   async generate(request: AIGenerateRequest): Promise<AIGenerateResponse> {
     try {
-      const prompt = request.messages.map((message) => message.content).join("\n\n");
+      const prompt = request.messages.map((m) => m.content).join("\n\n");
+      const isJson = request.responseFormat === "json";
+
       const response = await this.client.models.generateContent({
         model: this.config.model,
         contents: prompt,
         config: {
-          responseMimeType: "application/json",
-          temperature: 0.1,
+          ...(isJson ? { responseMimeType: "application/json" } : {}),
+          temperature: isJson ? 0.1 : 0.4,
         },
       });
 
       const text = response.text?.trim();
-
       if (!text) {
-        throw AppError.badGateway("Empty response from AI provider.");
+        throw AppError.badGateway("Empty response from Gemini provider.");
       }
 
-      const message = {
-        role: "assistant" as const,
-        content: text,
-      };
+      const message = { role: "assistant" as const, content: text };
 
       return {
         model: this.config.model,
@@ -49,15 +50,11 @@ export class GeminiProvider implements AIProvider {
         history: [...request.messages, message],
       };
     } catch (error) {
-      if (error instanceof AppError) {
-        throw error;
-      }
-
+      if (error instanceof AppError) throw error;
       if (!env.isProduction) {
         console.error("[AI][gemini]", error);
       }
-
-      throw AppError.badGateway("AI provider request failed.");
+      throw AppError.badGateway("Gemini provider request failed.");
     }
   }
 }
